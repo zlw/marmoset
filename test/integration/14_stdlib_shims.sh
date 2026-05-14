@@ -683,8 +683,8 @@ puts(0)
 EOF
 
 run_source_expect_output \
-    "std.io writes, flushes, prints and exposes stderr helpers" \
-    $'value:42\nerr:bad' <<'EOF'
+    "std.io write print puts and flush expose stdout and stderr helpers" \
+    $'value:42!\nerr:bad!' <<'EOF'
 import std.io
 import std.io.err
 
@@ -698,12 +698,32 @@ match io.print(42) {
   case Result.Failure(_): false
 }
 
+match io.puts("!") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match io.flush() {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
 match err.write("err:") {
   case Result.Success(_): true
   case Result.Failure(_): false
 }
 
 match err.print("bad") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match err.puts("!") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match err.flush() {
   case Result.Success(_): true
   case Result.Failure(_): false
 }

@@ -1,6 +1,6 @@
 import std.prelude.Show
 
-export Error, Read, Write, read, write, flush, print
+export Error, Read, Write, read, write, print, puts, flush
 
 type Error = {
   EndOfFile   = "Input ended",
@@ -20,9 +20,11 @@ trait Write[w, e] = {
   fn write(writer: w, value: Str) => Result[Unit, e]
   fn flush(writer: w) => Result[Unit, e]
 
-  fn print[a: Show](writer: w, value: a) => Result[Unit, e] = {
-    Write.write(writer, "#{value}\n") |> Result.bind((_) => Write.flush(writer))
-  }
+  fn print[a: Show](writer: w, value: a) => Result[Unit, e] =
+    Write.write(writer, "#{value}")
+
+  fn puts[a: Show](writer: w, value: a) => Result[Unit, e] =
+    Write.write(writer, "#{value}\n")
 }
 
 extern "std/io" as io_shim = {
@@ -42,5 +44,6 @@ impl Write[Stdout, Error] = {
 
 fn read() => Result[Str, Error] = Read.read(Stdin)
 fn write(value: Str) => Result[Unit, Error] = Write.write(Stdout, value)
-fn flush() => Result[Unit, Error] = Write.flush(Stdout)
 fn print[a: Show](value: a) => Result[Unit, Error] = Write.print(Stdout, value)
+fn puts[a: Show](value: a) => Result[Unit, Error] = Write.puts(Stdout, value)
+fn flush() => Result[Unit, Error] = Write.flush(Stdout)

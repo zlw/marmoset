@@ -1,7 +1,7 @@
 import std.prelude.Show
 import std.io
 
-export Error, write, flush, print
+export Error, write, print, puts, flush
 
 type Error = {
   BrokenPipe  = "Pipe is broken",
@@ -24,8 +24,11 @@ impl io.Write[Stderr, Error] = {
 fn write(value: Str) => Result[Unit, Error] =
   io.Write.write(Stderr, value)
 
-fn flush() => Result[Unit, Error] =
-  io.Write.flush(Stderr)
-
 fn print[a: Show](value: a) => Result[Unit, Error] =
   io.Write.print(Stderr, value)
+
+fn puts[a: Show](value: a) => Result[Unit, Error] =
+  io.Write.puts(Stderr, value)
+
+fn flush() => Result[Unit, Error] =
+  io.Write.flush(Stderr)

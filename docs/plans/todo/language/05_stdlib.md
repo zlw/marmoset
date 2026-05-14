@@ -55,7 +55,7 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 - `std/prelude.mr`, `std/option.mr`, and `std/result.mr` are toolchain stdlib modules loaded through the normal module pipeline.
 - `Option` and `Result` are canonical stdlib nominal types with inherent helper APIs.
 - `09_shim-first-go-interop.md` has introduced `extern type`, checked-in Go shims, canonical immutable `std.bytes.Bytes`, and the initial `std.file` proof slice.
-- `std.basics` now owns the implicit terminal output function `puts`; the compiler no longer lowers `puts` as an emitter special case.
+- `std.basics` currently owns the implicit terminal output function `puts`; `docs/plans/todo/language/11_io_output_names.md` supersedes that compatibility surface and plans to move canonical line output to `std.io.puts`.
 - `std.file` now exposes text-first whole-file helpers, explicit byte helpers, and scoped handle callbacks backed by private shim plumbing.
 - `std.path` owns pure path values and `std.dir` exposes filesystem-backed directory operations over high-level `Entry(path.Path, Kind)` values.
 - `std.io` now exposes low-level `Read[r, e]`/`Write[w, e]` protocols plus default terminal helpers backed by private singleton extern receiver values. Stderr helpers live in `std.io.err`.
@@ -67,6 +67,10 @@ Modules -> Prelude -> Shim-first Go interop -> Stdlib
 ### `std.basics`
 
 Minimal implementation substrate for prelude functions that need shim-backed runtime behavior before broader stdlib modules land.
+
+Note: `docs/plans/todo/language/11_io_output_names.md` supersedes the public
+`puts` direction below. `std.basics.puts` is a temporary compatibility surface;
+the target public line-output API is `std.io.puts`.
 
 Current API:
 
@@ -280,7 +284,7 @@ Current API:
 ```marmoset
 import std.prelude.Show
 
-export Error, Read, Write, read, write, flush, print
+export Error, Read, Write, read, write, print, puts, flush
 
 type Error = {
   EndOfFile = "Input ended",
@@ -297,6 +301,7 @@ trait Write[w, e] = {
   fn write(writer: w, value: Str) => Result[Unit, e]
   fn flush(writer: w) => Result[Unit, e]
   fn print[a: Show](writer: w, value: a) => Result[Unit, e]
+  fn puts[a: Show](writer: w, value: a) => Result[Unit, e]
 }
 
 extern type Stdin   # private singleton receiver
@@ -307,18 +312,21 @@ impl Write[Stdout, Error]
 
 fn read() => Result[Str, Error]
 fn write(value: Str) => Result[Unit, Error]
-fn flush() => Result[Unit, Error]
 fn print[a: Show](value: a) => Result[Unit, Error]
+fn puts[a: Show](value: a) => Result[Unit, Error]
+fn flush() => Result[Unit, Error]
 ```
 
 Rules:
 
 - `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
 - `io.write` writes the string to stdout without adding a newline.
-- `io.print` writes `Show.show(value)` plus a trailing newline, then flushes.
+- `io.print` writes `Show.show(value)` without adding a newline and does not flush implicitly.
+- `io.puts` writes `Show.show(value)` plus a trailing newline and does not flush implicitly.
+- `io.flush` is explicit; prompt-style code should call `io.write`, then `io.flush`, then `io.read`.
 - `std.io` does not export stdin/stdout handle values or types. It keeps private `Stdin`/`Stdout` extern singleton receivers so default terminal helpers can dogfood `Read[Stdin, Error]` and `Write[Stdout, Error]`.
 - `std.io` terminal shims accept the private receiver token at the Go boundary. The Go shim may ignore the token internally, but the Marmoset trait receiver still reaches the implementation boundary.
-- `std.io.err` exports `Error`, `write`, `flush`, and `print` for stderr. Its error enum omits `EndOfFile`; its private `Stderr` singleton implements `io.Write[Stderr, Error]`.
+- `std.io.err` exports `Error`, `write`, `print`, `puts`, and `flush` for stderr. Its error enum omits `EndOfFile`; its private `Stderr` singleton implements `io.Write[Stderr, Error]`.
 - File values implement `io.Read[File, FileReadError]` privately inside `std.file`; users call it through `io.Read.read(file)` inside `file.open` callbacks.
 
 ### `std.str`
@@ -449,7 +457,7 @@ Files:
 
 Tests:
 
-- Terminal print/println smoke tests.
+- Terminal write/print/puts/flush smoke tests.
 - Stdin fixture or deterministic test harness path for `read_line`.
 - String edge cases: empty strings, Unicode, missing delimiters, prefix/suffix, out-of-range slicing.
 

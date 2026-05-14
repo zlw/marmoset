@@ -89,8 +89,8 @@ let frames = error.frames(err)
 Invalid:
 
 ```marmoset
-std.io.print("Hello")
-let _ = std.io.print("Hello")
+std.io.puts("Hello")
+let _ = std.io.puts("Hello")
 ```
 
 Valid uses include returning the `Result`, binding it to a named variable, matching it, propagating it with `try`, recovering with `try ... or ...`, or composing it through `Result.bind`, `Result.map`, `Result.wrap`, or `Result.value_or`.

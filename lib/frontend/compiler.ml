@@ -1823,7 +1823,7 @@ let%test "imported constrained generic APIs seed hidden dependency traits" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.file\nimport std.path.Path\nlet target = Path(\"marmoset.tmp\")\nlet _ = file.write(target, \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(target)\nputs(0)\n"
+        "import std.file\nimport std.path.Path\nlet target = Path(\"marmoset.tmp\")\nlet write_result = file.write(target, \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(target)\nputs(0)\n"
       );
     ]
     (fun root ->
@@ -1849,7 +1849,7 @@ let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "import std.bytes\nimport std.file\nimport std.path.Path\nlet payload = bytes.from_str(\"hi\")\nlet _ = file.write(Path(\"marmoset.tmp\"), payload)\nputs(bytes.to_str_lossy(payload))\n"
+        "import std.bytes\nimport std.file\nimport std.path.Path\nlet payload = bytes.from_str(\"hi\")\nlet write_result = file.write(Path(\"marmoset.tmp\"), payload)\nputs(bytes.to_str_lossy(payload))\n"
       );
     ]
     (fun root ->
