@@ -1,18 +1,17 @@
 import std.io
-
-fn ask_name() => Result[Unit, io.Error] =
-  io.print("What's your name?")
-
-fn get_name(_: Unit) => Result[Str, io.Error] =
-  io.read()
-
-fn say_name(name: Str) => Result[Unit, io.Error] =
-  io.print("Hello, #{name}")
+import std.error
 
 fn hello_world() => Result[Unit, io.Error] = {
-  ask_name()
-  |> Result.bind(get_name)
-  |> Result.bind(say_name)
+  io.print("What's your name?")
+  |> Result.bind((_) => io.read())
+  |> Result.map("Hello, #{_}")
+  |> Result.bind(io.print)
 }
 
-hello_world()
+match hello_world() {
+  case Result.Success(_): true
+  case Result.Failure(err): {
+    puts(error.message(err))
+    false
+  }
+}

@@ -1,0 +1,20 @@
+type Error = {
+  Boom = "Boom",
+}
+
+fn source(ok: Bool) -> Result[Str, Error] = if (ok) {
+  Result.Success("ok")
+} else {
+  Result.Failure(Error.Boom)
+}
+
+fn pass_through() -> Result[Str, Error] = {
+  source(true)
+}
+
+let stored = pass_through()
+
+match stored {
+  case Result.Success(value): puts(value)  # output: ok
+  case Result.Failure(_): puts("bad")
+}

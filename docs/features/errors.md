@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-13
+- Last verified: 2026-05-14
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to `Error`/`*Error` enum classification, canonical messages, `std.error`, `Result`, `try`, shim boundary conversion, or Go error codegen
 
@@ -17,6 +17,7 @@ This doc covers production error values:
 - `std.error` helpers,
 - `Result.wrap`,
 - `try`, `try ... wrap ...`, and `try ... or ...`,
+- must-use `Result` checking,
 - shim boundary context.
 
 ## Error Enums
@@ -82,6 +83,17 @@ let frames = error.frames(err)
 `error.format` is reserved for a future recursive formatter; it is not part of the current `std.error` API.
 
 ## Result Helpers
+
+`Result` values are must-use. A `Result` cannot be silently discarded as a bare expression statement, as a block statement whose value is ignored, or through `let _ = ...`.
+
+Invalid:
+
+```marmoset
+std.io.print("Hello")
+let _ = std.io.print("Hello")
+```
+
+Valid uses include returning the `Result`, binding it to a named variable, matching it, propagating it with `try`, recovering with `try ... or ...`, or composing it through `Result.bind`, `Result.map`, `Result.wrap`, or `Result.value_or`.
 
 `Result.wrap` wraps failures and preserves successes:
 

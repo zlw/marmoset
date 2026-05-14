@@ -198,6 +198,9 @@ let items: List[Dyn[Show]] = [42, "hello", true]
 - A block evaluates to its last expression value.
 - `let` introduces bindings in block scope.
 - `if` is an expression and both branches must type-check to a compatible type.
+- `Result` values are must-use. A bare `Result` expression statement, block statement, or `let _ = ...`
+  discard is rejected. Return it, bind it to a named variable, match it, propagate it with `try`, recover
+  with `try ... or ...`, or compose it with `Result.bind`/`map`/`wrap`/`value_or`.
 
 ## 9. Match
 Canonical form:
@@ -634,3 +637,10 @@ Errors:
   - constrained-param shorthand,
   - `Dyn[...]`
   still use `ConstraintExpr`, not general type intersections.
+
+### 13.13 Must-Use Result Validation Rules
+- Any statement position that discards its value must reject `Result[a, e]`.
+- Discarding positions include expression statements, block statements used as statements, and wildcard
+  bindings (`let _ = ...`).
+- Tail expressions are not discards when their value is the enclosing block/function result.
+- Named `let` bindings are not discards; separate unused-variable analysis is out of scope for this rule.

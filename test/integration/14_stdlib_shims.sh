@@ -666,11 +666,11 @@ import std.io.err
 import std.dir
 import std.path.Path
 
-let _ = io.write("out")
-let _ = io.flush()
-let _ = err.write("err")
-let _ = err.flush()
-let _ = file.write(Path("$ROUNDTRIP_PATH"), "path")
+let out_write = io.write("out")
+let out_flush = io.flush()
+let err_write = err.write("err")
+let err_flush = err.flush()
+let path_write = file.write(Path("$ROUNDTRIP_PATH"), "path")
 let read_text: Result[Str, Error] = file.read(Path("$ROUNDTRIP_PATH"))
 let dir_entries: Result[List[dir.Entry], dir.LsError] = dir.ls(Path("$LISTING_DIR"))
 let file_protocol: Result[Unit, file.UseError[Error]] = file.open(Path("$ROUNDTRIP_PATH"), file.Mode.Append, (handle) => {
@@ -688,10 +688,25 @@ run_source_expect_output \
 import std.io
 import std.io.err
 
-let _ = io.write("value:")
-let _ = io.print(42)
-let _ = err.write("err:")
-let _ = err.print("bad")
+match io.write("value:") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match io.print(42) {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match err.write("err:") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
+
+match err.print("bad") {
+  case Result.Success(_): true
+  case Result.Failure(_): false
+}
 EOF
 
 run_source_expect_build_failure \
@@ -757,18 +772,18 @@ fn read_error_label(err: Error) -> Str = match err {
 }
 
 match io.read() {
-  case Result.Success(line): io.print("line:" + line)
-  case Result.Failure(err): io.print(read_error_label(err))
+  case Result.Success(line): puts("line:" + line)
+  case Result.Failure(err): puts(read_error_label(err))
 }
 
 match io.read() {
-  case Result.Success(line): io.print("line:" + line)
-  case Result.Failure(err): io.print(read_error_label(err))
+  case Result.Success(line): puts("line:" + line)
+  case Result.Failure(err): puts(read_error_label(err))
 }
 
 match io.read() {
-  case Result.Success(line): io.print("line:" + line)
-  case Result.Failure(err): io.print(read_error_label(err))
+  case Result.Success(line): puts("line:" + line)
+  case Result.Failure(err): puts(read_error_label(err))
 }
 EOF
 

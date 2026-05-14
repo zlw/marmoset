@@ -967,6 +967,24 @@ let option_type_arg (typ : mono_type) : mono_type option =
       | _ -> None)
   | _ -> None
 
+let is_result_type (typ : mono_type) : bool = Option.is_some (result_type_args typ)
+
+let statement_discards_value (stmt : AST.statement) : bool =
+  match stmt.stmt with
+  | AST.ExpressionStmt _ | AST.Block _ -> true
+  | AST.Let { name = "_"; _ } -> true
+  | _ -> false
+
+let require_result_value_used (stmt : AST.statement) (typ : mono_type) : (unit, Diagnostic.t) result =
+  if statement_discards_value stmt && is_result_type typ then
+    Error
+      (error_at_stmt ~code:"type-unused-result"
+         ~message:
+           "unused Result value: handle it with try, match, Result.bind/value_or, or bind it to a named variable"
+         stmt)
+  else
+    Ok ()
+
 let error_enum_name (typ : mono_type) : string option =
   match canonicalize_mono_type typ with
   | TEnum (enum_name, _) when Enum_registry.is_error_enum enum_name -> Some enum_name
@@ -4490,6 +4508,7 @@ and infer_block_against_expected ?(type_bindings = []) type_map env stmts expect
       match infer_statement ~type_bindings type_map env stmt with
       | Error e -> Error e
       | Ok (subst1, stmt_type) -> (
+          let* () = require_result_value_used stmt (apply_substitution subst1 stmt_type) in
           let env' =
             match stmt.stmt with
             | AST.Let let_binding ->
@@ -7168,6 +7187,7 @@ and infer_block ?(type_bindings = []) type_map env stmts =
       match infer_statement ~type_bindings type_map env stmt with
       | Error e -> Error e
       | Ok (subst1, stmt_type) -> (
+          let* () = require_result_value_used stmt (apply_substitution subst1 stmt_type) in
           (* For let statements, add the binding to the environment *)
           let env' =
             match stmt.stmt with
@@ -7626,6 +7646,7 @@ let infer_program
                                             let final_subst = compose_substitution subst stmt_subst in
                                             let env' = apply_substitution_env final_subst env in
                                             let stmt_type' = apply_substitution final_subst stmt_type in
+                                            let* () = require_result_value_used stmt stmt_type' in
                                             let env'' = add_let_binding env' stmt stmt_type' in
                                             Ok (env'', final_subst, stmt_type')))
                                 | stmt :: rest -> (
@@ -7640,6 +7661,8 @@ let infer_program
                                         | Error e -> Error e
                                         | Ok (stmt_subst, stmt_type) ->
                                             let subst' = compose_substitution subst stmt_subst in
+                                            let stmt_type' = apply_substitution subst' stmt_type in
+                                            let* () = require_result_value_used stmt stmt_type' in
                                             let env' = apply_substitution_env stmt_subst env in
                                             let env'' = add_let_binding env' stmt stmt_type in
                                             go env'' subst' seen_traits' seen_enums' seen_aliases' seen_types'
@@ -8356,25 +8379,61 @@ module Test = struct
             false)
 
   let%test "infer result.success with int" =
-    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nResult.Success(42)" in
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nlet r = Result.Success(42)\n0" in
     match infer_string code with
     | Error _ -> false
-    | Ok (_, _type_map, t) -> (
-        match t with
-        | TEnum ("Result", [ TInt; TVar _ ]) -> true
-        | _ ->
+    | Ok (env, _type_map, _) -> (
+        match TypeEnv.find_opt "r" env with
+        | Some (Forall (_, TEnum ("Result", [ TInt; TVar _ ]))) -> true
+        | Some (Forall (_, t)) ->
             Printf.printf "Expected Result[Int, _] but got %s\n" (to_string t);
+            false
+        | None ->
+            Printf.printf "Expected binding r\n";
             false)
 
   let%test "infer result.failure with string" =
-    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nResult.Failure(\"error\")" in
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nlet r = Result.Failure(\"error\")\n0" in
     match infer_string code with
     | Error _ -> false
-    | Ok (_, _type_map, t) -> (
-        match t with
-        | TEnum ("Result", [ TVar _; TString ]) -> true
-        | _ ->
+    | Ok (env, _type_map, _) -> (
+        match TypeEnv.find_opt "r" env with
+        | Some (Forall (_, TEnum ("Result", [ TVar _; TString ]))) -> true
+        | Some (Forall (_, t)) ->
             Printf.printf "Expected Result[_, String] but got %s\n" (to_string t);
+            false
+        | None ->
+            Printf.printf "Expected binding r\n";
+            false)
+
+  let%test "unused result expression statement is rejected" =
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nResult.Success(42)" in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e -> e.code = "type-unused-result" && contains_substring e.message "unused Result"
+
+  let%test "underscore result binding is rejected" =
+    let code = "enum Result[a, e] = { Success(a), Failure(e) }\nlet _ = Result.Success(42)\n0" in
+    match infer_string code with
+    | Ok _ -> false
+    | Error e -> e.code = "type-unused-result" && contains_substring e.message "unused Result"
+
+  let%test "result tail expression remains usable as function return" =
+    let code =
+      "enum Result[a, e] = { Success(a), Failure(e) }\nfn ok() -> Result[Int, Str] = { Result.Success(42) }\nlet r = ok()\n0"
+    in
+    match infer_string code with
+    | Error e ->
+        Printf.printf "Error: %s\n" e.message;
+        false
+    | Ok (env, _type_map, _) -> (
+        match TypeEnv.find_opt "r" env with
+        | Some (Forall (_, TEnum ("Result", [ TInt; TString ]))) -> true
+        | Some (Forall (_, t)) ->
+            Printf.printf "Expected Result[Int, String] but got %s\n" (to_string t);
+            false
+        | None ->
+            Printf.printf "Expected binding r\n";
             false)
 
   let%test "infer constructor with wrong arg count" =
