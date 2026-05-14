@@ -1,5 +1,4 @@
 import std.io
-import std.error
 
 fn hello_world() => Result[Unit, io.Error] = {
   io.print("What's your name?")
@@ -8,10 +7,4 @@ fn hello_world() => Result[Unit, io.Error] = {
   |> Result.bind(io.print)
 }
 
-match hello_world() {
-  case Result.Success(_): true
-  case Result.Failure(err): {
-    puts(error.message(err))
-    false
-  }
-}
+try hello_world()

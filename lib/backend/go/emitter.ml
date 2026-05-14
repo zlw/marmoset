@@ -7175,6 +7175,157 @@ and emit_option_try_binding
     binding_name some_payload ind result_go_name ind outer_option_go_name ind ind
     "unexpected Option tag in try expression" ind ind binding_name
 
+and wrap_failure_type_for_codegen
+    (state : emit_state)
+    ~(inner_error_type : Types.mono_type)
+    ~(target_type : string)
+    ~(target_variant : string) : Types.mono_type * string * string =
+  let target_enum_name = canonical_enum_name_for_codegen target_type in
+  let target_variant = canonical_variant_name_for_codegen target_enum_name target_variant in
+  match
+    ( Typecheck.Enum_registry.lookup target_enum_name,
+      Typecheck.Enum_registry.lookup_variant target_enum_name target_variant )
+  with
+  | Some enum_def, Some variant ->
+      let type_args = List.map (fun name -> Types.TVar name) enum_def.type_params in
+      let subst = Types.substitution_of_list (List.combine enum_def.type_params type_args) in
+      let field_types = List.map (Types.apply_substitution subst) variant.fields in
+      let rec first_unifying_field = function
+        | [] ->
+            failwith
+              (Printf.sprintf "Codegen error: wrap variant %s.%s does not accept %s" target_type
+                 target_variant (Types.to_string inner_error_type))
+        | field_type :: rest -> (
+            match
+              Unify.unify (Types.canonicalize_mono_type inner_error_type)
+                (Types.canonicalize_mono_type field_type)
+            with
+            | Ok field_subst -> field_subst
+            | Error _ -> first_unifying_field rest)
+      in
+      let field_subst = first_unifying_field field_types in
+      let error_type =
+        Types.TEnum (target_enum_name, List.map (Types.apply_substitution field_subst) type_args)
+        |> Types.canonicalize_mono_type
+      in
+      if has_type_vars error_type then
+        failwith
+          (Printf.sprintf "Codegen error: unresolved type variable in top-level try wrap target %s"
+             (Types.to_string error_type));
+      track_enum_inst state.mono error_type;
+      (error_type, target_enum_name, target_variant)
+  | _ ->
+      failwith
+        (Printf.sprintf "Codegen error: unknown wrap target %s.%s" target_type target_variant)
+
+and emit_top_level_result_try_binding
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(binding_name : string)
+    ~(binding_type : Types.mono_type)
+    ~(try_expr : AST.expression)
+    ~(tried : AST.expression)
+    ~(wrap : (string * string) option) : string =
+  let ind = indent_str state in
+  let tried_type = Types.canonicalize_mono_type (get_type type_map tried) in
+  let result_enum_name, result_type_args, _success_type, inner_error_type =
+    match result_type_parts_for_codegen tried_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: top-level try expression expected Result tried type"
+  in
+  add_go_import state.mono "fmt";
+  add_go_import state.mono "os";
+  track_enum_inst state.mono tried_type;
+  let result_var = fresh_temp_name state "__try_result" in
+  let result_expr = emit_expr_for_expected_type state type_map env tried_type tried in
+  let result_go_name = mangle_type tried_type in
+  let success_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Success" ~position:0 ~value_expr:result_var
+  in
+  let failure_payload =
+    enum_payload_expr_for_codegen state ~enum_name:result_enum_name ~type_args:result_type_args
+      ~variant_name:"Failure" ~position:0 ~value_expr:result_var
+  in
+  let failure_value =
+    match wrap with
+    | None ->
+        track_enum_inst state.mono inner_error_type;
+        failure_payload
+    | Some (target_type, target_variant) ->
+        let outer_error_type, target_enum_name, target_variant =
+          wrap_failure_type_for_codegen state ~inner_error_type ~target_type ~target_variant
+        in
+        let constructor_name = Printf.sprintf "%s_%s" (mangle_type outer_error_type) target_variant in
+        maybe_attach_source_error_context state try_expr outer_error_type target_enum_name target_variant
+          (Printf.sprintf "%s(%s)" constructor_name failure_payload)
+  in
+  let binding_go_type = type_to_go state.mono binding_type in
+  Printf.sprintf
+    "%svar %s %s\n%s%s := %s\n%sswitch %s.Tag {\n%scase %s_Success_tag:\n%s    %s = %s\n%scase %s_Failure_tag:\n%s    fmt.Fprintln(os.Stderr, %s)\n%s    os.Exit(1)\n%sdefault:\n%s    panic(%S)\n%s}\n%s_ = %s\n"
+    ind binding_name binding_go_type ind result_var result_expr ind result_var ind result_go_name ind
+    binding_name success_payload ind result_go_name ind failure_value ind ind ind
+    "unexpected Result tag in top-level try expression" ind ind binding_name
+
+and emit_top_level_option_try_binding
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(binding_name : string)
+    ~(binding_type : Types.mono_type)
+    ~(tried : AST.expression) : string =
+  let ind = indent_str state in
+  let tried_type = Types.canonicalize_mono_type (get_type type_map tried) in
+  let option_enum_name, option_type_args, _value_type =
+    match option_type_parts_for_codegen tried_type with
+    | Some parts -> parts
+    | None -> failwith "Codegen error: top-level try expression expected Option tried type"
+  in
+  add_go_import state.mono "os";
+  track_enum_inst state.mono tried_type;
+  let result_var = fresh_temp_name state "__try_option" in
+  let result_expr = emit_expr_for_expected_type state type_map env tried_type tried in
+  let result_go_name = mangle_type tried_type in
+  let some_payload =
+    enum_payload_expr_for_codegen state ~enum_name:option_enum_name ~type_args:option_type_args
+      ~variant_name:"Some" ~position:0 ~value_expr:result_var
+  in
+  let binding_go_type = type_to_go state.mono binding_type in
+  Printf.sprintf
+    "%svar %s %s\n%s%s := %s\n%sswitch %s.Tag {\n%scase %s_Some_tag:\n%s    %s = %s\n%scase %s_None_tag:\n%s    os.Exit(1)\n%sdefault:\n%s    panic(%S)\n%s}\n%s_ = %s\n"
+    ind binding_name binding_go_type ind result_var result_expr ind result_var ind result_go_name ind
+    binding_name some_payload ind result_go_name ind ind ind
+    "unexpected Option tag in top-level try expression" ind ind binding_name
+
+and emit_try_binding_for_context
+    (state : emit_state)
+    (type_map : Infer.type_map)
+    (env : Infer.type_env)
+    ~(binding_name : string)
+    ~(binding_type : Types.mono_type)
+    ~(try_expr : AST.expression)
+    ~(tried : AST.expression)
+    ~(wrap : (string * string) option) : string =
+  let tried_type = Types.canonicalize_mono_type (get_type type_map tried) in
+  match result_type_parts_for_codegen tried_type with
+  | Some _ ->
+      if Option.is_some state.current_return_type then
+        emit_try_binding state type_map env ~binding_name ~binding_type ~try_expr ~tried ~wrap
+      else
+        emit_top_level_result_try_binding state type_map env ~binding_name ~binding_type ~try_expr ~tried
+          ~wrap
+  | None -> (
+      if Option.is_some wrap then
+        failwith "Codegen error: try wrap expected Result tried type";
+      match option_type_parts_for_codegen tried_type with
+      | Some _ ->
+          if Option.is_some state.current_return_type then
+            emit_option_try_binding state type_map env ~binding_name ~binding_type ~tried
+          else
+            emit_top_level_option_try_binding state type_map env ~binding_name ~binding_type ~tried
+      | None -> failwith "Codegen error: try expression expected Result or Option tried type")
+
 and emit_wrap_expr
     (state : emit_state)
     (type_map : Infer.type_map)
@@ -7460,6 +7611,14 @@ and emit_stmt
         | AST.Match (scrutinee, arms) ->
             let code = emit_match ~target:DiscardTarget state type_map env let_binding.value scrutinee arms in
             (code, env)
+        | AST.Try { tried; wrap; fallback = None } ->
+            let binding_name = fresh_temp_name state "__try_value" in
+            let binding_type = get_type type_map let_binding.value in
+            let code =
+              emit_try_binding_for_context state type_map env ~binding_name ~binding_type
+                ~try_expr:let_binding.value ~tried ~wrap
+            in
+            (code, env)
         | _ ->
             let expr_type = get_type type_map let_binding.value in
             let expr_str = emit_expr_for_expected_type state type_map env expr_type let_binding.value in
@@ -7511,13 +7670,8 @@ and emit_stmt
                 (binding_code, env'))
         | AST.Try { tried; wrap; fallback = None } ->
             let binding_code =
-              match result_type_parts_for_codegen (Types.canonicalize_mono_type (get_type type_map tried)) with
-              | Some _ ->
-                  emit_try_binding state type_map env ~binding_name:go_binding_name ~binding_type:expr_type
-                    ~try_expr:let_binding.value ~tried ~wrap
-              | None ->
-                  emit_option_try_binding state type_map env ~binding_name:go_binding_name ~binding_type:expr_type
-                    ~tried
+              emit_try_binding_for_context state type_map env ~binding_name:go_binding_name
+                ~binding_type:expr_type ~try_expr:let_binding.value ~tried ~wrap
             in
             let env' = Infer.TypeEnv.add let_binding.name (Types.Forall ([], expr_type)) env in
             (binding_code, env')
@@ -7679,6 +7833,14 @@ and emit_stmt
           (code, env)
       | AST.Match (scrutinee, arms) ->
           let code = emit_match ~target:DiscardTarget state type_map env expr scrutinee arms in
+          (code, env)
+      | AST.Try { tried; wrap; fallback = None } ->
+          let binding_name = fresh_temp_name state "__try_value" in
+          let binding_type = get_type type_map expr in
+          let code =
+            emit_try_binding_for_context state type_map env ~binding_name ~binding_type ~try_expr:expr ~tried
+              ~wrap
+          in
           (code, env)
       | _ ->
           let expr_str = emit_expr state type_map env expr in

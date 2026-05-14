@@ -303,9 +303,9 @@ fn load(path: path.Path) -> Result[Config, ConfigError] = {
 Checks for `Result` propagation:
 
 1. The tried expression must have type `Result[a, InnerError]`.
-2. The enclosing function must return `Result[b, OuterError]`.
-3. Without `wrap`, `InnerError` must be the same error type as `OuterError`.
-4. With `wrap OuterError.Variant`, the variant must belong to `OuterError` and accept `InnerError` as one of its declared payloads.
+2. Inside a function, the enclosing function must return `Result[b, OuterError]`; at top level, failure prints the error and exits with status `1`.
+3. Without `wrap`, function-body propagation requires `InnerError` to be the same error type as `OuterError`; top-level propagation requires `InnerError` to be an `Error`/`*Error` enum.
+4. With `wrap OuterError.Variant`, the variant must belong to `OuterError` inside a function, or to the named top-level print error, and accept `InnerError` as one of its declared payloads.
 5. The constructed outer error gets its own canonical message and frame while preserving the original error payload.
 
 The exact parser form is:
@@ -316,8 +316,8 @@ try <expr> wrap <ErrorType>.<Variant>
 try <expr> or <fallback>
 ```
 
-Plain `try` is valid only inside function bodies whose return type matches the propagated container: `Result` propagates `Result.Failure`, and `Option` propagates `Option.None`.
-`try ... wrap ...` is Result-only and wraps a failure into the enclosing error enum.
+Plain `try` is valid inside function bodies whose return type matches the propagated container: `Result` propagates `Result.Failure`, and `Option` propagates `Option.None`. It is also valid at top level for scripting-style entrypoints: `Result.Failure` prints the error and exits with status `1`, and `Option.None` exits with status `1` without printing.
+`try ... wrap ...` is Result-only and wraps a failure into the enclosing error enum, or into the named printed error type at top level.
 `try ... or ...` is recovery, not propagation: it unwraps `Result.Success` / `Option.Some` and evaluates to the fallback value for `Result.Failure` / `Option.None`, so it is valid anywhere an expression is valid.
 
 ## Implementation Phases
@@ -589,13 +589,13 @@ Changes:
    }
    ```
 
-3. Typecheck `try` only inside a function body whose return type is `Result[_, OuterError]`.
+3. Typecheck `try` inside a function body whose return type is `Result[_, OuterError]`, or at top level where failure exits the generated entrypoint.
 4. Infer the success value type from `Result[a, InnerError]`.
-5. Without `wrap`, require `InnerError` and `OuterError` to be the same error type.
-6. With `wrap`, validate that the target variant belongs to `OuterError` and can accept `InnerError` as a declared payload.
-7. Emit early return code that preserves or wraps the error and adds a frame.
+5. Without `wrap`, require `InnerError` and `OuterError` to be the same error type inside functions; at top level require `InnerError` to be an `Error`/`*Error` enum.
+6. With `wrap`, validate that the target variant belongs to `OuterError` inside functions, or to the named top-level print error, and can accept `InnerError` as a declared payload.
+7. Emit early return code inside functions, and top-level print/exit code in entrypoints.
 8. Reject:
-   - `try` outside a function body;
+   - top-level `try` on `Result` values whose error type is not an `Error`/`*Error` enum;
    - `try` in a function that does not return `Result`;
    - `try` on non-`Result` values;
    - wrapping into a non-error type;
@@ -863,3 +863,6 @@ The implementation can start without resolving all five. Questions 1, 2, and 4 m
 - 2026-05-13 22:16 CEST: RED observed. `dune runtest lib/frontend/syntax` fails because `Surface.SEWrap` does not exist yet, `npm test -- --include 'Wrap expression'` parses bare `wrap` as separate expressions, and `./test/ci/std-style.sh` still catches the old `try ... wrap` plus `Result.Success` decode adapter.
 - 2026-05-13 22:33 CEST: Bare `wrap` expression slice is green. Verification passed with `dune runtest lib/frontend/syntax lib/frontend/typecheck lib/backend/go tools/lsp/lib`, `make unit`, `make integration result prelude stdlib-shims`, targeted new result fixtures, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check std/file.mr`, `./test/ci/std-style.sh`, `test/ci/tree-sitter.sh`, `test/ci/editor-vscode.sh`, `test/ci/editor-nvim.sh`, `test/ci/editor-jetbrains.sh`, `git diff --check`, and `git diff --cached --check`. `./test/ci/quality.sh` remains blocked on repo-wide `@fmt` drift in existing OCaml/LSP files.
 - 2026-05-13 22:35 CEST: Bare `wrap` expression commit created.
+- 2026-05-14 19:27 CEST: Follow-up top-level `try` slice started after scripting-style examples showed `try hello_world()` should work at entrypoint scope. RED coverage first showed top-level Result/Option try failing in codegen after the typechecker change.
+- 2026-05-14 19:29 CEST: Top-level `try` slice is green. `try Result` now prints failures to stderr and exits `1`, `try Option.None` exits `1`, `try ... wrap ...` adapts the printed error at top level, and `examples/hello_stdin.mr` uses `try hello_world()`. Verification passed with `make integration result`, `make integration prelude`, `dune runtest lib/frontend/typecheck`, `dune runtest lib/backend/go`, `MARMOSET_ROOT=$PWD dune exec -- bin/main.exe check examples/hello_stdin.mr`, and `git diff --check`.
+- 2026-05-14 19:30 CEST: Top-level `try` commit created.

@@ -44,6 +44,49 @@ run_project_expect_output() {
     rm -rf "$root"
 }
 
+run_project_expect_failure() {
+    local name="$1"
+    local expected_status="$2"
+    local expected_output="$3"
+    local source="$4"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local root
+    local binpath
+    local build_output
+    local output
+    local status
+    root=$(mktemp -d marmoset_prelude_project.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_prelude_bin.XXXXXX")
+    rm -f "$binpath"
+
+    printf "%s" "$source" > "$root/main.mr"
+
+    if build_output=$($EXECUTABLE build "$root/main.mr" -o "$binpath" 2>&1); then
+        set +e
+        output=$("$binpath" 2>&1)
+        status=$?
+        set -e
+
+        if [ "$status" -eq "$expected_status" ] && [ "$output" = "$expected_output" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected status $expected_status and output '$expected_output', got status $status and output '$output')"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Build output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$root"
+}
+
 run_project_expect_output \
     "headerless entry auto-loads prelude sums, traits, and operators" \
     $'1\n42\nok\ntrue' \
@@ -78,5 +121,23 @@ run_project_expect_output \
     "std.error exposes canonical messages and hidden construction frames" \
     $'File not found\ntrue\nmatched' \
     $'import std.error\n\ntype FileError = { NotFound(Str) = "File not found" }\n\nlet err = FileError.NotFound("missing")\nlet _ = error.context(err)\nputs(error.message(err))\nputs(Show.show(len(error.frames(err)) > 0))\nmatch err {\n  case FileError.NotFound(_): puts("matched")\n}\n'
+
+run_project_expect_failure \
+    "top-level try prints Result failures and exits nonzero" \
+    1 \
+    $'Boom' \
+    $'type Error = { Boom = "Boom" }\n\nfn fail() -> Result[Int, Error] = Result.Failure(Error.Boom)\n\nlet value = try fail()\nputs(value)\n'
+
+run_project_expect_failure \
+    "top-level try wrap prints the adapted Result failure" \
+    1 \
+    $'Outer failure' \
+    $'type InnerError = { Missing = "Missing" }\ntype OuterError = { Inner(InnerError) = "Outer failure" }\n\nfn fail() -> Result[Int, InnerError] = Result.Failure(InnerError.Missing)\n\nlet value = try fail() wrap OuterError.Inner\nputs(value)\n'
+
+run_project_expect_failure \
+    "top-level try exits nonzero for Option.None" \
+    1 \
+    "" \
+    $'fn absent() -> Option[Int] = Option.None\n\nlet value = try absent()\nputs(value)\n'
 
 suite_end

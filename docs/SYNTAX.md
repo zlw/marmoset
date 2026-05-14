@@ -201,6 +201,8 @@ let items: List[Dyn[Show]] = [42, "hello", true]
 - `Result` values are must-use. A bare `Result` expression statement, block statement, or `let _ = ...`
   discard is rejected. Return it, bind it to a named variable, match it, propagate it with `try`, recover
   with `try ... or ...`, or compose it with `Result.bind`/`map`/`wrap`/`value_or`.
+- At top level, `try` is valid for scripting-style entrypoints: `Result.Failure` prints the error and exits
+  with status `1`, while `Option.None` exits with status `1` without printing.
 
 ## 9. Match
 Canonical form:

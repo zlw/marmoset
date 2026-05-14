@@ -114,8 +114,7 @@ fn read_text(path: std.path.Path) -> Result[Str, std.file.Error] = {
 }
 ```
 
-The enclosing function must have a known `Result[_, ErrorType]` return type.
-The tried expression must have type `Result[a, InnerError]`.
+Inside a function, the enclosing function must have a known `Result[_, ErrorType]` return type. At top level, `try` is allowed for scripting-style programs: a `Result.Failure` is printed to stderr and exits with status `1`. The tried expression must have type `Result[a, InnerError]`, and `InnerError` must be an `Error` or `*Error` enum.
 
 Use `try ... wrap ...` when the enclosing error type differs:
 
@@ -130,7 +129,7 @@ fn load(path: std.path.Path) -> Result[Str, ConfigError] = {
 }
 ```
 
-The wrap variant must belong to the enclosing error enum and accept the inner error type.
+Inside a function, the wrap variant must belong to the enclosing error enum and accept the inner error type. At top level, `try ... wrap ...` prints the adapted outer error and exits with status `1` on failure.
 
 `try` also works with `Option` inside functions that return `Option`:
 
@@ -140,6 +139,8 @@ fn display_name(name: Option[Str]) -> Option[Str] = {
   Option.Some(value)
 }
 ```
+
+At top level, `try Option.None` exits with status `1` and no error message.
 
 Use `try ... or ...` to recover to a fallback value instead of propagating. It works for both `Result` failures and `Option.None`, and it is an ordinary expression, so it can be used at top level:
 

@@ -1,6 +1,4 @@
-# R003: try is only valid inside function bodies
-type Error = {
-  Missing = "Missing value",
-}
+# R003: top-level try still requires typed error values
+fn ok() -> Result[Str, Str] = Result.Success("value")
 
-let value = try Result.Success("value")  # error: try expression is only valid inside function bodies
+let value = try ok()  # error: try requires Result error type to be an Error or *Error enum

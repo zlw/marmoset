@@ -3357,25 +3357,26 @@ and infer_try type_map env expr tried wrap fallback : (substitution * mono_type)
   | None -> (
       match (result_type_args tried_type', option_type_arg tried_type') with
       | None, Some success_type ->
-          let outer_value =
-            match current_function_return_type () with
-            | None ->
-                Error
-                  (error_at ~code:"type-try" ~message:"try expression is only valid inside function bodies" expr)
-            | Some None ->
-                Error
-                  (error_at ~code:"type-try" ~message:"try on Option requires enclosing function to return Option"
-                     expr)
-            | Some (Some enclosing_return) -> (
-                match option_type_arg enclosing_return with
-                | Some value_type -> Ok value_type
-                | None ->
-                    Error
-                      (error_at ~code:"type-try"
-                         ~message:"try on Option requires enclosing function to return Option" expr))
-          in
-          let* _outer_value = outer_value in
-          Ok (subst, success_type)
+          if Option.is_some wrap then
+            Error (error_at ~code:"type-try" ~message:"try wrap requires a Result value" expr)
+          else
+            let outer_value =
+              match current_function_return_type () with
+              | None -> Ok success_type
+              | Some None ->
+                  Error
+                    (error_at ~code:"type-try"
+                       ~message:"try on Option requires enclosing function to return Option" expr)
+              | Some (Some enclosing_return) -> (
+                  match option_type_arg enclosing_return with
+                  | Some value_type -> Ok value_type
+                  | None ->
+                      Error
+                        (error_at ~code:"type-try"
+                           ~message:"try on Option requires enclosing function to return Option" expr))
+            in
+            let* _outer_value = outer_value in
+            Ok (subst, success_type)
       | Some (success_type, inner_error), _ ->
           infer_result_try type_map expr tried subst success_type inner_error wrap
       | None, None ->
@@ -3383,31 +3384,73 @@ and infer_try type_map env expr tried wrap fallback : (substitution * mono_type)
 
 and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
     (substitution * mono_type) infer_result =
-  let* _outer_ok, outer_error =
-    match current_function_return_type () with
-    | None ->
-        Error (error_at ~code:"type-try" ~message:"try expression is only valid inside function bodies" expr)
-    | Some None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)
-    | Some (Some enclosing_return) -> (
-        match result_type_args enclosing_return with
-        | Some args -> Ok args
-        | None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
-  in
-  let outer_error' = apply_substitution subst outer_error in
+  match current_function_return_type () with
+  | None -> infer_top_level_result_try expr subst success_type inner_error wrap
+  | Some current_return -> (
+      let* _outer_ok, outer_error =
+        match current_return with
+        | None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)
+        | Some enclosing_return -> (
+            match result_type_args enclosing_return with
+            | Some args -> Ok args
+            | None -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+      in
+      let outer_error' = apply_substitution subst outer_error in
+      let inner_error' = apply_substitution subst inner_error in
+      match wrap with
+      | None ->
+          if Option.is_none (error_enum_name inner_error') || Option.is_none (error_enum_name outer_error') then
+            Error
+              (error_at ~code:"type-try"
+                 ~message:"try requires Result error types to be Error or *Error enums" expr)
+          else if mono_types_unify inner_error' outer_error' then
+            Ok (subst, success_type)
+          else
+            Error (error_at ~code:"type-try" ~message:"try without wrap requires matching error types" expr)
+      | Some (target_type, target_variant) -> (
+          let target_enum_name = canonical_enum_name_of_source_name target_type in
+          match canonicalize_mono_type outer_error' with
+          | TEnum (outer_enum_name, outer_args) when target_enum_name = outer_enum_name -> (
+              if not (Enum_registry.is_error_enum target_enum_name) then
+                Error (error_at ~code:"type-try" ~message:"wrap target type must be an error type" expr)
+              else
+                match Enum_registry.lookup_variant target_enum_name target_variant with
+                | None ->
+                    Error
+                      (error_at ~code:"type-try"
+                         ~message:(Printf.sprintf "Unknown constructor: %s.%s" target_type target_variant)
+                         expr)
+                | Some variant ->
+                    let field_types = instantiate_variant_fields target_enum_name outer_args variant in
+                    if List.exists (mono_types_unify inner_error') field_types then
+                      Ok (subst, success_type)
+                    else
+                      Error
+                        (error_at ~code:"type-try"
+                           ~message:
+                             (Printf.sprintf "wrap variant must accept %s"
+                                (Types.to_string (canonicalize_mono_type inner_error')))
+                           expr))
+          | TEnum _ ->
+              Error (error_at ~code:"type-try" ~message:"wrap target must match enclosing Result error type" expr)
+          | _ -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)))
+
+and infer_top_level_result_try expr subst success_type inner_error wrap :
+    (substitution * mono_type) infer_result =
   let inner_error' = apply_substitution subst inner_error in
   match wrap with
   | None ->
-      if Option.is_none (error_enum_name inner_error') || Option.is_none (error_enum_name outer_error') then
+      if Option.is_none (error_enum_name inner_error') then
         Error
-          (error_at ~code:"type-try" ~message:"try requires Result error types to be Error or *Error enums" expr)
-      else if mono_types_unify inner_error' outer_error' then
-        Ok (subst, success_type)
+          (error_at ~code:"type-try" ~message:"try requires Result error type to be an Error or *Error enum"
+             expr)
       else
-        Error (error_at ~code:"type-try" ~message:"try without wrap requires matching error types" expr)
+        Ok (subst, success_type)
   | Some (target_type, target_variant) -> (
       let target_enum_name = canonical_enum_name_of_source_name target_type in
-      match canonicalize_mono_type outer_error' with
-      | TEnum (outer_enum_name, outer_args) when target_enum_name = outer_enum_name -> (
+      match Enum_registry.lookup target_enum_name with
+      | None -> Error (error_at ~code:"type-try" ~message:(unknown_type_message target_type) expr)
+      | Some enum_def -> (
           if not (Enum_registry.is_error_enum target_enum_name) then
             Error (error_at ~code:"type-try" ~message:"wrap target type must be an error type" expr)
           else
@@ -3418,19 +3461,23 @@ and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
                      ~message:(Printf.sprintf "Unknown constructor: %s.%s" target_type target_variant)
                      expr)
             | Some variant ->
-                let field_types = instantiate_variant_fields target_enum_name outer_args variant in
-                if List.exists (mono_types_unify inner_error') field_types then
-                  Ok (subst, success_type)
-                else
-                  Error
-                    (error_at ~code:"type-try"
-                       ~message:
-                         (Printf.sprintf "wrap variant must accept %s"
-                            (Types.to_string (canonicalize_mono_type inner_error')))
-                       expr))
-      | TEnum _ ->
-          Error (error_at ~code:"type-try" ~message:"wrap target must match enclosing Result error type" expr)
-      | _ -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr))
+                let fresh_vars = List.map (fun _ -> fresh_type_var ()) enum_def.type_params in
+                let field_types = instantiate_variant_fields target_enum_name fresh_vars variant in
+                let rec first_unifying_field = function
+                  | [] ->
+                      Error
+                        (error_at ~code:"type-try"
+                           ~message:
+                             (Printf.sprintf "wrap variant must accept %s"
+                                (Types.to_string (canonicalize_mono_type inner_error')))
+                           expr)
+                  | field_type :: rest -> (
+                      match unify inner_error' field_type with
+                      | Ok field_subst -> Ok field_subst
+                      | Error _ -> first_unifying_field rest)
+                in
+                let* field_subst = first_unifying_field field_types in
+                Ok (compose_substitution subst field_subst, success_type)))
 
 and infer_wrap type_map env expr wrapped (target_type, target_variant) : (substitution * mono_type) infer_result =
   let* subst, wrapped_type = infer_expression type_map env wrapped in
