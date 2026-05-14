@@ -5,6 +5,9 @@
 - Last verified: 2026-05-12
 - Implementation status: In progress (`std.basics`, `std.bytes`, `std.path`, `std.file`, `std.dir`, and trait-shaped `std.io` proof slices landed; broader stdlib expansion pending)
 - Update trigger: Any stdlib, shim interop, prelude, module discovery, `Bytes`, resource-handle, or collection representation change
+- Follow-up: `docs/plans/todo/language/12_host_aligned_stdlib_runtime.md`
+  owns the distinction between ergonomic Marmoset APIs and Go-aligned stdlib
+  runtime resources, buffering, and generated-Go interop.
 - Prerequisites:
   - `docs/plans/done/language/06_module-system.md`
   - `docs/plans/done/language/07_prelude.md`

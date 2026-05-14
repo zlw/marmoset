@@ -6,6 +6,8 @@
 - Implementation status: In progress
 - Area: Language / stdlib
 - Supersedes: the `std.io` output naming details in `docs/plans/todo/language/05_stdlib.md`
+- Follow-up: `docs/plans/todo/language/12_host_aligned_stdlib_runtime.md`
+  owns the broader buffering, Go primitive, and generated-Go interop questions.
 
 ## Context
 
