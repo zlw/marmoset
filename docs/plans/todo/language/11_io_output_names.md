@@ -15,7 +15,7 @@ carry too many meanings:
 
 - raw string vs `Show` rendering,
 - no newline vs newline,
-- buffered write vs explicit flush.
+- terminal output vs file/writer flushing.
 
 The fixture migration plan also needs one canonical output spelling before the
 repo-wide `puts(...)` cleanup starts. If fixtures migrate to `io.print(...)`
@@ -41,7 +41,7 @@ Current relevant files:
    - `write`: raw `Str`
    - `print`: `Show` rendering, no newline
    - `puts`: `Show` rendering plus trailing newline
-   - `flush`: explicit flushing
+   - `flush`: explicit flushing/syncing for writers that need it
 2. Keep stdout and stderr APIs symmetric.
 3. Keep `io.Write[w, e]` useful for stdout, stderr, and file handles without
    forcing a flush after every line.
@@ -53,7 +53,7 @@ Current relevant files:
 
 - Do not change `std.io.read` semantics.
 - Do not introduce `println`; `puts` is the line-output spelling.
-- Do not make `print` or `puts` flush implicitly in this plan.
+- Do not introduce hidden buffering semantics for terminal `print` or `puts`.
 - Do not remove the runtime/builtin `puts` compatibility surface until fixtures,
   examples, docs, and editor metadata have migrated.
 - Do not change Go stdout/stderr shim behavior beyond what is needed to support
@@ -104,11 +104,12 @@ Rules:
   placement.
 - `print` renders with `Show` and writes no newline.
 - `puts` renders with `Show` and writes exactly one trailing newline.
-- `flush` is explicit. Callers that need prompt-style behavior write and flush:
+- `flush` is explicit for writers that actually buffer or sync, such as file
+  handles. The current Go stdout/stderr shims write directly to
+  `os.Stdout`/`os.Stderr`, so prompt-style terminal code does not need a flush:
 
 ```marmoset
-try io.write("Name: ")
-try io.flush()
+try io.print("Name: ")
 let name = try io.read()
 try io.puts("Hello, #{name}")
 ```
@@ -123,7 +124,7 @@ Expected fixture targets once the std fixture group exists:
 
 - `test/fixtures/std/io/io001_write_print_puts_stdout.mr`
 - `test/fixtures/std/io/io002_write_print_puts_stderr.mr`
-- `test/fixtures/std/io/io003_prompt_requires_explicit_flush.mr`
+- `test/fixtures/std/io/io003_prompt_prints_without_newline.mr`
 
 Until the fixture harness supports std fixture projects, add equivalent focused
 coverage in `test/integration/14_stdlib_shims.sh` or the first std fixture
@@ -136,7 +137,9 @@ Assertions:
   text on stderr once stderr-specific fixture assertions exist.
 - `io.print("x")` does not append a newline.
 - `io.puts("x")` appends one newline.
-- `io.flush()` remains callable and failable through `Result`.
+- `io.flush()` remains callable and failable through `Result`, even though the
+  stdout/stderr Go shims are currently no-ops because those streams are not
+  wrapped in a Marmoset-managed buffer.
 
 ### Phase 1: Add `puts` Without Removing `print`
 
@@ -154,7 +157,8 @@ Changes:
 - Export `std.io.err.puts`.
 - Keep `io.print` and `err.print` with the new no-newline semantics.
 - Keep `io.write` and `err.write` as raw `Str` helpers.
-- Keep `flush` unchanged.
+- Keep `flush` unchanged. It remains meaningful for file handles and future
+  buffered writers; stdout/stderr keep matching the current direct Go writes.
 
 The Go `std/io` and `std/io/err` shims should not need new functions because
 `print` and `puts` are Marmoset-level defaults over `write`.
@@ -176,8 +180,8 @@ make integration std/io
 Update user-facing examples:
 
 - line output -> `try io.puts(...)`
-- prompt/no-newline output -> `try io.write(...)` plus `try io.flush()` when the
-  following read depends on the prompt being visible
+- prompt/no-newline terminal output -> `try io.print(...)`
+- raw no-newline terminal output -> `try io.write(...)`
 - no-newline `Show` rendering -> `try io.print(...)`
 
 Update:
@@ -274,9 +278,12 @@ calls except deliberate historical notes or removed-plan progress text.
 
 ## Risks
 
-- `io.print` changes behavior from newline+flush to no-newline. Any existing
+- `io.print` changes behavior from newline output to no-newline output. Any existing
   user code or examples using `io.print` for line output must migrate to
   `io.puts`.
+- Keep terminal IO Go-shaped. Do not make examples call `flush` unless the
+  target writer is actually buffered or synced; today stdout/stderr writes go
+  directly to `os.Stdout`/`os.Stderr`.
 - Removing bare `puts` makes output fixtures depend on stdlib, `Result`, and
   top-level `try`. Keep enough low-level compiler/unit coverage to debug stdlib
   failures.
@@ -304,3 +311,6 @@ calls except deliberate historical notes or removed-plan progress text.
   `make integration runtime` still has the pre-existing
   `runtime/b16_string_backslash_literal` escape-output mismatch, and
   `./test/ci/quality.sh` still reports unrelated repo-wide ocamlformat drift.
+- 2026-05-14 23:04 CEST: Tightened the plan after reviewing the Go stdout and
+  stderr shims: terminal output is a thin direct write to `os.Stdout` /
+  `os.Stderr`, and `flush` is not required for prompt-style examples.

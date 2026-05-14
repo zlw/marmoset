@@ -321,9 +321,9 @@ Rules:
 
 - `io.read` reads one stdin line without the trailing newline. End-of-input is `Error.EndOfFile`.
 - `io.write` writes the string to stdout without adding a newline.
-- `io.print` writes `Show.show(value)` without adding a newline and does not flush implicitly.
-- `io.puts` writes `Show.show(value)` plus a trailing newline and does not flush implicitly.
-- `io.flush` is explicit; prompt-style code should call `io.write`, then `io.flush`, then `io.read`.
+- `io.print` writes `Show.show(value)` to stdout without adding a newline.
+- `io.puts` writes `Show.show(value)` to stdout plus a trailing newline.
+- `io.flush` is explicit for writers that actually buffer or sync. The current stdout/stderr Go shims write directly to `os.Stdout`/`os.Stderr`, so prompt-style terminal code can call `io.print`, then `io.read` without a flush ceremony.
 - `std.io` does not export stdin/stdout handle values or types. It keeps private `Stdin`/`Stdout` extern singleton receivers so default terminal helpers can dogfood `Read[Stdin, Error]` and `Write[Stdout, Error]`.
 - `std.io` terminal shims accept the private receiver token at the Go boundary. The Go shim may ignore the token internally, but the Marmoset trait receiver still reaches the implementation boundary.
 - `std.io.err` exports `Error`, `write`, `print`, `puts`, and `flush` for stderr. Its error enum omits `EndOfFile`; its private `Stderr` singleton implements `io.Write[Stderr, Error]`.
