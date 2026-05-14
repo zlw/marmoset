@@ -1,4 +1,4 @@
-# VN32: Placeholder shorthand stays pure-only in qualified-call callback slots
+# VN32: Placeholder shorthand infers effectful qualified-call callback slots
 type Counter = { value: Int }
 
 impl Counter = {
@@ -6,4 +6,4 @@ impl Counter = {
 }
 
 let counter: Counter = {value: 1}
-Counter.each(counter, puts(_))  # error: explicit '=>'
+Counter.each(counter, puts(_))  # output: 1

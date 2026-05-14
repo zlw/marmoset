@@ -1377,30 +1377,25 @@ let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders in on
         diags
   | Ok _ -> false
 
-let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
+let%test "Phase6 prep: placeholder shorthand infers effectful callback slots" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
     check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts(\"x\")\nforeach_list([1, 2], puts(_))"
   with
-  | Error diags ->
-      List.exists
-        (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
-        diags
-  | Ok _ -> false
+  | Ok result -> result.result_type = Types.TNull
+  | Error _ -> false
 
-let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sections" =
+let%test "Phase6 prep: placeholder shorthand infers effectful standalone sections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
-  | Error diags ->
-      List.exists
-        (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
-        diags
-  | Ok _ -> false
+  | Ok result -> (
+      match Types.canonicalize_mono_type result.result_type with
+      | Types.TFun (_, Types.TNull, Types.Effectful) -> true
+      | _ -> false)
+  | Error _ -> false
 
 let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders across block bodies" =
   Infer.reset_fresh_counter ();

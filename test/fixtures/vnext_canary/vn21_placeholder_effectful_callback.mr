@@ -1,0 +1,4 @@
+# VN21: Placeholder shorthand infers effectful callback position
+fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts("x")
+
+foreach_list([1, 2], puts(_))  # output: x

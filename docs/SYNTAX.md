@@ -246,7 +246,7 @@ Notes:
 - Effectful: `(x) => expr`, `(a, b) => expr`
 
 ### 11.2 Placeholder Shorthand
-- Single-arg pure shorthand only.
+- Single-arg shorthand.
 - `_` can appear in nested expression positions.
 
 Examples:
@@ -266,7 +266,7 @@ Restrictions:
 - Expression must contain exactly one placeholder `_`.
 - Expressions with zero placeholders remain ordinary expressions and are not rewritten.
 - Multi-placeholder forms like `_ + _` are rejected.
-- Effectful callbacks require explicit `=>` lambda (no placeholder effectful form).
+- Placeholder sections infer their callable effect from the rewritten body.
 - Placeholder rewrite does not fire inside an explicit `(x) -> ...` or `(x) => ...` body.
 
 ## 12. Canonical Example (Condensed)
@@ -560,7 +560,9 @@ fn g[t0: Show & Eq](x: t0) -> Str = ...
 
 ### 13.8 Placeholder Lambda Rewrite
 Rule:
-- If expression `E` contains exactly one placeholder `_` and no explicit lambda arrow, rewrite to `(it) -> E[it/_]` with fresh `it`.
+- If expression `E` contains exactly one placeholder `_` and no explicit lambda arrow, rewrite to a
+  single-argument function over `E[it/_]` with fresh `it`; the function effect is inferred from the
+  rewritten body.
 
 Examples:
 ```mr
@@ -582,7 +584,6 @@ Zero-placeholder expressions are left unchanged.
 
 Errors:
 - Any expression containing more than one placeholder is rejected.
-- Effectful intent with placeholder is not inferred. Use explicit `=>` lambda.
 - Explicit lambda bodies are not rewritten. `_` stays a literal identifier inside `(x) -> ...` or `(x) => ...`.
 
 ### 13.9 Trait/Impl/Derive Validation Rules

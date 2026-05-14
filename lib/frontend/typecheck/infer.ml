@@ -207,8 +207,7 @@ type placeholder_rewrite_map = (int, AST.expression) Hashtbl.t
 
 type placeholder_callback_expectation =
   | PlaceholderCallbackNotCallable
-  | PlaceholderCallbackPureAllowed
-  | PlaceholderCallbackEffectfulOnly
+  | PlaceholderCallbackCallable
 
 let global_placeholder_rewrite_store : placeholder_rewrite_map = Hashtbl.create 64
 let global_synthetic_expr_id_counter : int ref = ref (-1)
@@ -521,8 +520,7 @@ let lookup_method_call_effect (expr_id : int) : effect =
 let record_call_effect (expr : AST.expression) (call_effect : effect) : unit =
   Hashtbl.replace global_call_effect_store expr.id call_effect
 
-let lookup_call_effect (expr_id : int) : effect option =
-  Hashtbl.find_opt global_call_effect_store expr_id
+let lookup_call_effect (expr_id : int) : effect option = Hashtbl.find_opt global_call_effect_store expr_id
 
 let snapshot_call_resolution_store () : (int, Resolution_artifacts.call_resolution) Hashtbl.t =
   Hashtbl.copy global_call_resolution_store
@@ -1629,11 +1627,13 @@ let provisional_function_type
       | Ok rev_param_types ->
           let param_types = List.rev rev_param_types in
           let function_effect = effect_of_ast effect in
-          Ok (List.fold_right (fun param_type acc -> TFun (param_type, acc, function_effect)) param_types return_type)
-      )
+          Ok
+            (List.fold_right
+               (fun param_type acc -> TFun (param_type, acc, function_effect))
+               param_types return_type))
 
 let provisional_placeholder_section_type ?(outer_type_bindings = []) () : (mono_type, Diagnostic.t) result =
-  provisional_function_type ~outer_type_bindings None [ ("__section_param", None) ] None AST.Pure
+  provisional_function_type ~outer_type_bindings None [ ("__section_param", None) ] None AST.EffectPoly
 
 type symbol_scope = symbol_id NameMap.t
 type symbol_scope_stack = symbol_scope list
@@ -3418,15 +3418,14 @@ and infer_wrap type_map env expr wrapped (target_type, target_variant) : (substi
   let* subst, wrapped_type = infer_expression type_map env wrapped in
   let wrapped_type' = apply_substitution subst wrapped_type in
   match result_type_args wrapped_type' with
-  | None ->
-      Error (error_at ~code:"type-wrap" ~message:"wrapped expression must have type Result" wrapped)
+  | None -> Error (error_at ~code:"type-wrap" ~message:"wrapped expression must have type Result" wrapped)
   | Some (success_type, inner_error) -> (
       let target_enum_name = canonical_enum_name_of_source_name target_type in
       let inner_error' = apply_substitution subst inner_error in
       if Option.is_none (error_enum_name inner_error') then
         Error
-          (error_at ~code:"type-wrap"
-             ~message:"wrap requires Result error type to be an Error or *Error enum" expr)
+          (error_at ~code:"type-wrap" ~message:"wrap requires Result error type to be an Error or *Error enum"
+             expr)
       else
         match Enum_registry.lookup target_enum_name with
         | None -> Error (error_at ~code:"type-wrap" ~message:(unknown_type_message target_type) expr)
@@ -3779,16 +3778,17 @@ and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool 
 and type_callable_effect (typ : mono_type) : effect =
   match canonicalize_mono_type typ with
   | TFun (_, _, effect) -> effect
-  | TUnion members -> List.fold_left (fun acc member -> combine_effect acc (type_callable_effect member)) Pure members
+  | TUnion members ->
+      List.fold_left (fun acc member -> combine_effect acc (type_callable_effect member)) Pure members
   | _ -> Pure
 
 and effect_poly_argument_effect (expected : mono_type) (actual : mono_type) : effect option =
   match (canonicalize_mono_type expected, canonicalize_mono_type actual) with
   | TFun (_, _, EffectPoly), actual_callable -> Some (type_callable_effect actual_callable)
-  | TFun (expected_arg, expected_ret, _), TFun (actual_arg, actual_ret, _) ->
+  | TFun (expected_arg, expected_ret, _), TFun (actual_arg, actual_ret, _) -> (
       let arg_effect = effect_poly_argument_effect expected_arg actual_arg in
       let ret_effect = effect_poly_argument_effect expected_ret actual_ret in
-      (match (arg_effect, ret_effect) with
+      match (arg_effect, ret_effect) with
       | None, None -> None
       | Some effect, None | None, Some effect -> Some effect
       | Some left, Some right -> Some (combine_effect left right))
@@ -3837,16 +3837,17 @@ and expr_effect (type_map : type_map) (expr : AST.expression) : effect =
         (fun acc arg -> combine_effect acc (expr_effect type_map arg))
         (combine_effect method_effect (expr_effect type_map mc_receiver))
         mc_args
-  | AST.If (cond, then_branch, else_branch) -> (
+  | AST.If (cond, then_branch, else_branch) ->
       combine_effect (expr_effect type_map cond)
         (combine_effect (body_effect type_map then_branch)
            (match else_branch with
            | None -> Pure
-           | Some b -> body_effect type_map b)))
+           | Some b -> body_effect type_map b))
   | AST.Function _ -> Pure (* defining a function is not calling one *)
   | AST.Prefix (_, e) -> expr_effect type_map e
   | AST.Infix (l, _, r) -> combine_effect (expr_effect type_map l) (expr_effect type_map r)
-  | AST.Array elements -> List.fold_left (fun acc elem -> combine_effect acc (expr_effect type_map elem)) Pure elements
+  | AST.Array elements ->
+      List.fold_left (fun acc elem -> combine_effect acc (expr_effect type_map elem)) Pure elements
   | AST.Index (arr, idx) -> combine_effect (expr_effect type_map arr) (expr_effect type_map idx)
   | AST.Hash pairs ->
       List.fold_left
@@ -3878,7 +3879,8 @@ and expr_effect (type_map : type_map) (expr : AST.expression) : effect =
   | AST.EnumConstructor (_, _, args) ->
       List.fold_left (fun acc arg -> combine_effect acc (expr_effect type_map arg)) Pure args
   | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> Pure
-  | AST.BlockExpr stmts -> List.fold_left (fun acc stmt -> combine_effect acc (body_effect type_map stmt)) Pure stmts
+  | AST.BlockExpr stmts ->
+      List.fold_left (fun acc stmt -> combine_effect acc (body_effect type_map stmt)) Pure stmts
 
 and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool =
   effect_is_effectful (expr_effect type_map expr)
@@ -4180,8 +4182,7 @@ and infer_function_with_annotations
     | AST.Effectful -> `Effectful
     | AST.EffectPoly -> `EffectPoly
     | AST.Pure when Option.is_some return_annot -> `Pure
-    | AST.Pure ->
-      `Unspecified
+    | AST.Pure -> `Unspecified
   in
   match
     type_callable type_map env ~type_bindings:type_var_map ~known_param_types ~params ~return_annot ~known_return
@@ -4369,21 +4370,12 @@ and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statem
 
 and placeholder_callback_expectation (typ : mono_type) : placeholder_callback_expectation =
   match canonicalize_mono_type typ with
-  | TFun (_, _, effect) ->
-      if effect_is_effectful effect then
-        PlaceholderCallbackEffectfulOnly
-      else
-        PlaceholderCallbackPureAllowed
+  | TFun _ -> PlaceholderCallbackCallable
   | TUnion members ->
       List.fold_left
         (fun acc member ->
           match (acc, placeholder_callback_expectation member) with
-          | PlaceholderCallbackPureAllowed, _ | _, PlaceholderCallbackPureAllowed ->
-              PlaceholderCallbackPureAllowed
-          | PlaceholderCallbackEffectfulOnly, PlaceholderCallbackEffectfulOnly -> PlaceholderCallbackEffectfulOnly
-          | PlaceholderCallbackNotCallable, PlaceholderCallbackEffectfulOnly
-          | PlaceholderCallbackEffectfulOnly, PlaceholderCallbackNotCallable ->
-              PlaceholderCallbackEffectfulOnly
+          | PlaceholderCallbackCallable, _ | _, PlaceholderCallbackCallable -> PlaceholderCallbackCallable
           | PlaceholderCallbackNotCallable, PlaceholderCallbackNotCallable -> PlaceholderCallbackNotCallable)
         PlaceholderCallbackNotCallable members
   | _ -> PlaceholderCallbackNotCallable
@@ -4422,18 +4414,8 @@ and placeholder_count_error (expr : AST.expression) (count : int) : Diagnostic.t
     ~message:(Printf.sprintf "Placeholder shorthand requires exactly one '_' placeholder, found %d" count)
     expr
 
-and placeholder_effectful_error (expr : AST.expression) : Diagnostic.t =
-  error_at ~code:"type-invalid-placeholder"
-    ~message:"Placeholder shorthand is pure-only; use an explicit '=>' lambda for effectful functions" expr
-
 and placeholder_unbound_identifier_error (diag : Diagnostic.t) : bool =
   diag.code = "type-unbound-var" && String_utils.contains_substring ~needle:"Unbound variable: _" diag.message
-
-and placeholder_callable_is_effectful (typ : mono_type) : bool =
-  match canonicalize_mono_type typ with
-  | TFun (_, _, effect) -> effect_is_effectful effect
-  | TUnion members -> List.exists placeholder_callable_is_effectful members
-  | _ -> false
 
 and infer_function_literal
     ?known_signature
@@ -4489,17 +4471,12 @@ and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr 
   match rewritten_expr.expr with
   | AST.Function { origin; generics; params; return_type; effect; body } -> (
       match
-        infer_function_literal type_map env rewritten_expr ~origin ~generics ~params ~return_type ~effect
-          ~body
+        infer_function_literal type_map env rewritten_expr ~origin ~generics ~params ~return_type ~effect ~body
       with
       | Error _ as err -> err
       | Ok (subst, func_type) ->
-          let inferred_type = apply_substitution subst func_type in
-          if placeholder_callable_is_effectful inferred_type then
-            Error (placeholder_effectful_error expr)
-          else (
-            record_placeholder_rewrite expr rewritten_expr;
-            Ok (subst, func_type)))
+          record_placeholder_rewrite expr rewritten_expr;
+          Ok (subst, func_type))
   | _ -> failwith "placeholder section rewrite must produce a function literal"
 
 and infer_block_against_expected ?(type_bindings = []) type_map env stmts expected_type =
@@ -4798,8 +4775,7 @@ and infer_expression_against_expected type_map env (expr : AST.expression) expec
         | Some signature ->
             infer_function_literal ~known_signature:signature type_map env expr ~origin ~generics ~params
               ~return_type ~effect ~body
-        | None ->
-            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~effect ~body)
+        | None -> infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~effect ~body)
     | AST.If (condition, consequence, alternative) ->
         infer_if_against_expected type_map env condition consequence alternative expected_type
     | AST.Match (scrutinee, arms) -> infer_match_against_expected type_map env expr scrutinee arms expected_type
@@ -4834,55 +4810,45 @@ and infer_arg_against_expected type_map env subst (arg : AST.expression) (expect
   if placeholder_count > 1 then
     Error (placeholder_count_error arg placeholder_count)
   else
-    match (placeholder_count, placeholder_expectation) with
-    | 1, PlaceholderCallbackEffectfulOnly -> Error (placeholder_effectful_error arg)
-    | _ -> (
-        let rewrite, inferred_arg =
-          match (placeholder_count, placeholder_expectation) with
-          | 1, PlaceholderCallbackPureAllowed ->
-              let rewritten_arg = placeholder_lambda_expr arg in
-              (Some rewritten_arg, rewritten_arg)
-          | _ -> (None, arg)
-        in
-        let record_rewrite () =
-          Option.iter (fun rewritten_arg -> record_placeholder_rewrite arg rewritten_arg) rewrite
-        in
-        let env' = apply_substitution_env subst env in
-        let infer_arg_expr () = infer_expression_against_expected type_map env' inferred_arg expected_type' in
-        match infer_arg_expr () with
-        | Error e -> Error e
-        | Ok (subst1, arg_type) -> (
-            let subst' = compose_substitution subst subst1 in
-            let expected_type'' = apply_substitution subst' expected_type in
-            let arg_type' = apply_substitution subst' arg_type in
-            if
-              placeholder_count = 1
-              && placeholder_expectation = PlaceholderCallbackPureAllowed
-              && placeholder_callable_is_effectful arg_type'
-            then
-              Error (placeholder_effectful_error arg)
-            else
-              match canonicalize_mono_type expected_type'' with
-              | TTraitObject _ -> (
-                  match record_expected_trait_object_coercions type_map arg expected_type'' with
-                  | Error e -> Error e
-                  | Ok () ->
-                      record_rewrite ();
-                      propagate_type_var_constraints_through_substitution subst';
-                      Ok (subst' (* coercion is metadata-only *), expected_type''))
-              | _ -> (
-                  match compatible_with_expected_type arg_type' expected_type'' with
-                  | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
-                  | Ok subst2 -> (
-                      let final_subst = compose_substitution subst' subst2 in
-                      let final_type = apply_substitution final_subst arg_type in
-                      apply_substitution_type_map subst2 type_map;
-                      match record_expected_trait_object_coercions type_map arg expected_type'' with
-                      | Error e -> Error e
-                      | Ok () ->
-                          record_rewrite ();
-                          propagate_type_var_constraints_through_substitution final_subst;
-                          Ok (final_subst, final_type)))))
+    let rewrite, inferred_arg =
+      match (placeholder_count, placeholder_expectation) with
+      | 1, PlaceholderCallbackCallable ->
+          let rewritten_arg = placeholder_lambda_expr arg in
+          (Some rewritten_arg, rewritten_arg)
+      | _ -> (None, arg)
+    in
+    let record_rewrite () =
+      Option.iter (fun rewritten_arg -> record_placeholder_rewrite arg rewritten_arg) rewrite
+    in
+    let env' = apply_substitution_env subst env in
+    let infer_arg_expr () = infer_expression_against_expected type_map env' inferred_arg expected_type' in
+    match infer_arg_expr () with
+    | Error e -> Error e
+    | Ok (subst1, arg_type) -> (
+        let subst' = compose_substitution subst subst1 in
+        let expected_type'' = apply_substitution subst' expected_type in
+        let arg_type' = apply_substitution subst' arg_type in
+        match canonicalize_mono_type expected_type'' with
+        | TTraitObject _ -> (
+            match record_expected_trait_object_coercions type_map arg expected_type'' with
+            | Error e -> Error e
+            | Ok () ->
+                record_rewrite ();
+                propagate_type_var_constraints_through_substitution subst';
+                Ok (subst' (* coercion is metadata-only *), expected_type''))
+        | _ -> (
+            match compatible_with_expected_type arg_type' expected_type'' with
+            | Error e -> Error (error_at ~code:e.code ~message:e.message arg)
+            | Ok subst2 -> (
+                let final_subst = compose_substitution subst' subst2 in
+                let final_type = apply_substitution final_subst arg_type in
+                apply_substitution_type_map subst2 type_map;
+                match record_expected_trait_object_coercions type_map arg expected_type'' with
+                | Error e -> Error e
+                | Ok () ->
+                    record_rewrite ();
+                    propagate_type_var_constraints_through_substitution final_subst;
+                    Ok (final_subst, final_type))))
 
 and infer_args_against_expected type_map env subst args expected_types =
   match (args, expected_types) with
@@ -5071,12 +5037,11 @@ and infer_regular_call type_map env (call_expr : AST.expression) func args =
                   | Error diag -> Error (error_at ~code:diag.code ~message:diag.message call_expr)
                   | Ok () ->
                       let resolved_func_type = apply_substitution final_subst func_type' in
-                      let resolved_param_types =
-                        List.map (apply_substitution final_subst) expected_param_types
-                      in
+                      let resolved_param_types = List.map (apply_substitution final_subst) expected_param_types in
                       let resolved_arg_types = List.map (apply_substitution final_subst) arg_types in
                       let call_effect =
-                        resolve_effect_polymorphic_call (type_callable_effect resolved_func_type)
+                        resolve_effect_polymorphic_call
+                          (type_callable_effect resolved_func_type)
                           resolved_param_types resolved_arg_types
                       in
                       record_call_effect call_expr call_effect;
@@ -7110,13 +7075,12 @@ and infer_let ?(prefer_existing_self = false) ?(type_bindings = []) type_map env
           (* Infer expression type with self in scope *)
           let infer_expr_result =
             match (expr.expr, callable_context, type_annotation) with
-            | AST.Function { origin; generics; params; return_type; effect; body }, Some (_, signature), _
-              ->
+            | AST.Function { origin; generics; params; return_type; effect; body }, Some (_, signature), _ ->
                 infer_function_literal ~known_signature:signature type_map env_with_self expr ~origin ~generics
                   ~params ~return_type ~effect ~body
             | AST.Function { origin; generics; params; return_type; effect; body }, None, _ ->
-                infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type
-                  ~effect ~body
+                infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type ~effect
+                  ~body
             | _, _, Some type_expr -> (
                 match Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr with
                 | Error d -> Error d
