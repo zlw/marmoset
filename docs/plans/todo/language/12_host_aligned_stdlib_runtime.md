@@ -45,6 +45,8 @@ The `std.io` output naming slice exposed the distinction:
    `net/http`, gRPC, sqlc, database drivers, filesystem APIs, and networking.
 5. Keep the public API explicit about allocation, buffering, flushing, syncing,
    ownership, and closing.
+6. Preserve functional semantics for ordinary Marmoset values while allowing
+   scoped imperative resources where Go-level performance needs mutation.
 
 ## Non-Goals
 
@@ -70,6 +72,30 @@ Stdlib modules should have two layers:
 
 Function names do not have to copy Go. Representation and semantics should.
 
+## Functional Semantics, Imperative Runtime
+
+Marmoset should not pretend that buffers are pure values. Buffers are
+inherently mutable. The stdlib should make that mutation explicit and scoped,
+while keeping ordinary values immutable and easy to reason about.
+
+Layering:
+
+- `Bytes`, `Str`, records, enums, and collection values remain immutable value
+  data for normal pure and effectful Marmoset code.
+- `Buffer`, `Builder`, `Reader`, `Writer`, `File`, `Conn`, and similar handles
+  are opaque resources. They may mutate internally, but only through effectful
+  APIs.
+- mutable resources should usually be acquired through scoped APIs, so they
+  cannot be stored globally or used after close/free.
+- converting mutable resource state into ordinary values should be explicit:
+  copy/freeze into `Bytes` or `Str`, or later use a borrow/slice mechanism if
+  the language grows ownership/lifetime support.
+
+This gives Marmoset FP semantics at the value layer and imperative Go
+performance at the resource layer. It is the same separation we want for files,
+network connections, buffered readers/writers, HTTP bodies, database rows, and
+generated gRPC/sqlc values.
+
 ## IO And Buffering Direction
 
 Questions to settle before adding broader IO APIs:
@@ -84,6 +110,8 @@ Questions to settle before adding broader IO APIs:
   separate `sync` operation for `os.File.Sync`?
 - Should terminal `print` / `puts` use direct stdout/stderr writes, while
   generic buffered writers expose explicit flushing?
+- What scoped-resource syntax or helper prevents nested callback pyramids when
+  code needs multiple resources at once?
 
 Likely shape:
 
@@ -97,6 +125,32 @@ let writer = bufio.writer(file)
 try io.write(writer, bytes)
 try io.flush(writer)
 ```
+
+Avoid making common resource code look like this:
+
+```marmoset
+try file.open(input, (src) => {
+  try file.open(output, (dst) => {
+    buffer.with_capacity(8192, (scratch) => {
+      copy_loop(src, dst, scratch)
+    })
+  })
+})
+```
+
+The target shape should flatten multi-resource acquisition while preserving
+cleanup guarantees. Exact syntax is undecided, but the plan should evaluate a
+language-level or stdlib-level form like:
+
+```marmoset
+with file.open(input) as src,
+     file.open(output) as dst,
+     buffer.with_capacity(8192) as scratch {
+  try copy_loop(src, dst, scratch)
+}
+```
+
+or a library form that can express the same ownership without pyramid nesting.
 
 Convenience helpers may remain pleasant:
 
@@ -122,6 +176,9 @@ But those helpers should lower through normal Go concepts: `os.File`,
   needs bytes and reusable buffers.
 - `std.bytes.Bytes` is immutable, which is good for app code but not enough for
   zero-copy or low-allocation read loops by itself.
+- scoped file APIs currently compose through nested callbacks. That proves
+  cleanup, but it scales poorly for ordinary copy/transform flows that need two
+  files plus a scratch buffer.
 
 ## Networking And Generated Go Pressure
 
@@ -173,6 +230,12 @@ The plan should explicitly decide:
 - whether a mutable buffer type is needed,
 - whether `read_line` style helpers belong in `io`, `bufio`, or `file`.
 
+The decision must preserve this split:
+
+- immutable `Bytes` for stable value semantics;
+- mutable `Buffer`/`Builder` resources for performance-sensitive loops;
+- explicit copy/freeze/borrow boundaries between the two.
+
 ### Phase 2: Separate Flush From Sync
 
 If file durability remains public, give it a name that matches the Go concept.
@@ -194,7 +257,25 @@ Test:
 - buffered reader reads lines/chunks without per-byte allocation where possible,
 - file and network-like resources can share reader/writer capabilities.
 
-### Phase 4: Use The Model In One Host Wrapper
+### Phase 4: Flatten Scoped Resource Composition
+
+Design and test the resource composition API before broader networking work.
+The proof should include at least:
+
+- opening two files and one scratch buffer without nested callback indentation;
+- cleanup on success, failure, and early `try` return;
+- no way for the scoped mutable buffer or closed file handle to escape;
+- readable error propagation when acquisition of the second or third resource
+  fails.
+
+Candidate approaches:
+
+- language-level `with ... as ... { ... }`;
+- stdlib `resource.with` / `resource.using` helper;
+- arity-specific helpers only as a temporary bridge if the language form is not
+  ready.
+
+### Phase 5: Use The Model In One Host Wrapper
 
 Pick one generated/host-backed integration and prove the resource model works.
 Good candidates:
@@ -225,12 +306,14 @@ make unit compiler
 1. Should the current `io.Write[w, e]` text trait be replaced, renamed, or kept
    as a convenience above byte-oriented writer capabilities?
 2. What is the minimum mutable buffer API needed before networking work starts?
-3. Should `puts` remain the Marmoset line-output helper, or should host-aligned
+3. Should scoped resources use language syntax, stdlib helpers, or both to
+   avoid callback pyramids?
+4. Should `puts` remain the Marmoset line-output helper, or should host-aligned
    output eventually prefer `println` while keeping `puts` as compatibility
    sugar?
-4. How much Go stdlib shape should be visible in module names such as `bufio`,
+5. How much Go stdlib shape should be visible in module names such as `bufio`,
    `http`, `sql`, and `context`?
-5. Do we need explicit ownership/lifetime rules for extern resources before
+6. Do we need explicit ownership/lifetime rules for extern resources before
    exposing HTTP/gRPC/sqlc wrappers?
 
 ## Progress
@@ -240,3 +323,8 @@ make unit compiler
   semantics. The immediate concrete follow-up is to audit `flush`/`sync` and
   decide whether core IO traits should be byte-oriented before networking or
   generated-Go wrappers are added.
+- 2026-05-15 00:23 CEST: Added the value/resource split: immutable Marmoset
+  values keep functional semantics, while mutable buffers/builders/readers and
+  writers are scoped effectful resources for Go-level performance. Also added a
+  phase to flatten multi-resource code so two-file-plus-buffer workflows do not
+  devolve into callback pyramids.
