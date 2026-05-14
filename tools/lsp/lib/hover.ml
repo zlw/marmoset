@@ -152,7 +152,11 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
           done;
           if !idx < len && tokens.(!idx).token_type = Token.RParen then
             incr idx;
-          (if !idx < len && (tokens.(!idx).token_type = Token.Arrow || tokens.(!idx).token_type = Token.FatArrow)
+          (if
+             !idx < len
+             && (tokens.(!idx).token_type = Token.Arrow
+                || tokens.(!idx).token_type = Token.FatArrow
+                || tokens.(!idx).token_type = Token.TildeArrow)
            then
              let arrow_token = tokens.(!idx) in
              let ret_start = !idx + 1 in
@@ -166,10 +170,10 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
                push_hover_item items ~start_pos:tokens.(ret_start).pos ~end_pos:(token_end_pos ret_end)
                  ~text:return_text;
                let arrow_text =
-                 if arrow_token.token_type = Token.FatArrow then
-                   " => "
-                 else
-                   " -> "
+                 match arrow_token.token_type with
+                 | Token.FatArrow -> " => "
+                 | Token.TildeArrow -> " ~> "
+                 | _ -> " -> "
                in
                let params_text = "(" ^ String.concat ", " (List.rev !param_type_texts) ^ ")" in
                push_hover_item items ~start_pos:name_tok.pos ~end_pos:(token_end_pos name_tok)
@@ -892,6 +896,11 @@ let%test "hover on top-level fn declaration name shows named function type and h
       && string_contains h.type_text "Map[Str, Str]"
       && string_contains h.type_text "=> Unit"
       && h.highlighted = "print_book_name"
+  | _, None -> false
+
+let%test "hover on effect-polymorphic fn declaration name shows tilde arrow" =
+  match hover_marked "fn |apply(f: (Int) ~> Int, x: Int) ~> Int = f(x)" with
+  | _, Some h -> string_contains h.type_text "apply:" && string_contains h.type_text "~> Int" && h.highlighted = "apply"
   | _, None -> false
 
 let%test "hover on top-level fn param highlights only the param name" =

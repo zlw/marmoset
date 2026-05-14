@@ -14,6 +14,7 @@ class MarmosetLexerTest {
         assertEquals(MarmosetTokenTypes.TYPE, tokens["Str"])
         assertEquals(MarmosetTokenTypes.TYPE, tokens["Result"])
         assertEquals(MarmosetTokenTypes.OPERATOR, tokens["->"])
+        assertEquals(MarmosetTokenTypes.OPERATOR, lex("""fn apply(f: (Int) ~> Int) ~> Int = f(1)""")["~>"])
         assertEquals(MarmosetTokenTypes.KEYWORD, tokens["try"])
         assertEquals(MarmosetTokenTypes.FUNCTION_CALL, tokens["parse"])
         assertEquals(MarmosetTokenTypes.KEYWORD, tokens["or"])

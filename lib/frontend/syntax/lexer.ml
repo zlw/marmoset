@@ -39,6 +39,11 @@ let rec next_token (l : lexer) : lexer * Token.token =
         (read_char (read_char l), Token.init ~pos Arrow "->")
       else
         (read_char l, Token.init ~pos Minus "-")
+  | '~' ->
+      if peek_char l = '>' then
+        (read_char (read_char l), Token.init ~pos TildeArrow "~>")
+      else
+        (read_char l, Token.init ~pos Illegal "~")
   | '*' -> (read_char l, Token.init ~pos Asterisk "*")
   | '/' -> (read_char l, Token.init ~pos Slash "/")
   | '<' ->

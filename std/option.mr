@@ -8,12 +8,12 @@ impl[a] Option[a] = {
     case Option.None: fallback
   }
 
-  fn map[b](self: Option[a], f: (a) -> b) -> Option[b] = match self {
+  fn map[b](self: Option[a], f: (a) ~> b) ~> Option[b] = match self {
     case Option.Some(v): Option.Some(f(v))
     case Option.None: Option.None
   }
 
-  fn bind[b](self: Option[a], f: (a) -> Option[b]) -> Option[b] = match self {
+  fn bind[b](self: Option[a], f: (a) ~> Option[b]) ~> Option[b] = match self {
     case Option.Some(v): f(v)
     case Option.None: Option.None
   }

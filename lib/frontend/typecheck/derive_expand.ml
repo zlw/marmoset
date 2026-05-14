@@ -67,12 +67,12 @@ let type_expr_key_with_binders (binder_names : string list) (type_expr : AST.typ
     | AST.TCon name -> "Con(" ^ name ^ ")"
     | AST.TTraitObject traits -> "Dyn(" ^ String.concat "&" (List.sort_uniq String.compare traits) ^ ")"
     | AST.TApp (name, args) -> "App(" ^ name ^ "[" ^ String.concat "," (List.map go args) ^ "])"
-    | AST.TArrow (params, ret, is_effectful) ->
+    | AST.TArrow (params, ret, effect) ->
         let arrow =
-          if is_effectful then
-            "=>"
-          else
-            "->"
+          match effect with
+          | AST.Pure -> "->"
+          | AST.Effectful -> "=>"
+          | AST.EffectPoly -> "~>"
         in
         "Arrow(" ^ String.concat "," (List.map go params) ^ arrow ^ go ret ^ ")"
     | AST.TUnion members ->
@@ -106,12 +106,12 @@ let render_type_expr (type_expr : AST.type_expr) : string =
     | AST.TCon name -> name
     | AST.TTraitObject traits -> "Dyn[" ^ String.concat " & " traits ^ "]"
     | AST.TApp (name, args) -> name ^ "[" ^ String.concat ", " (List.map render args) ^ "]"
-    | AST.TArrow (params, ret, is_effectful) ->
+    | AST.TArrow (params, ret, effect) ->
         let arrow =
-          if is_effectful then
-            " => "
-          else
-            " -> "
+          match effect with
+          | AST.Pure -> " -> "
+          | AST.Effectful -> " => "
+          | AST.EffectPoly -> " ~> "
         in
         let params =
           match params with
@@ -354,7 +354,7 @@ let clone_default_body
             ( clone_expr condition,
               clone_stmt bound_names consequence,
               Option.map (clone_stmt bound_names) alternative )
-      | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
+      | AST.Function { origin; generics; params; return_type; effect; body } ->
           let generic_names =
             match generics with
             | None -> []
@@ -377,7 +377,7 @@ let clone_default_body
                 Option.map
                   (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names')
                   return_type;
-              is_effectful;
+              effect;
               body = clone_stmt bound_names' body;
             }
       | AST.Call (callee, args) -> AST.Call (clone_expr callee, List.map clone_expr args)

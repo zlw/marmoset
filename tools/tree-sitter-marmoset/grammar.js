@@ -105,7 +105,7 @@ module.exports = grammar({
         "(",
         commaSep($.parameter),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         "=",
         field("body", $.expr_or_block),
         optional(";"),
@@ -150,7 +150,7 @@ module.exports = grammar({
         "(",
         commaSep($.trait_sig_param),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         optional(seq("=", field("body", $.expr_or_block))),
       ),
 
@@ -205,7 +205,7 @@ module.exports = grammar({
         "(",
         commaSep($.parameter),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         "=",
         field("body", $.expr_or_block),
       ),
@@ -324,7 +324,7 @@ module.exports = grammar({
       ),
 
     function_type: ($) =>
-      seq("(", commaSep($._type), ")", choice("->", "=>"), field("return_type", $._type)),
+      seq("(", commaSep($._type), ")", choice("->", "=>", "~>"), field("return_type", $._type)),
 
     parenthesized_type: ($) => seq("(", $._type, ")"),
 
@@ -590,7 +590,7 @@ module.exports = grammar({
           "(",
           commaSep($.lambda_parameter),
           ")",
-          choice("->", "=>"),
+          choice("->", "=>", "~>"),
           field("body", $.expr_or_block),
         ),
       ),

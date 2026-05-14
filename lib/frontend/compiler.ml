@@ -228,7 +228,7 @@ let poly_type_of_extern_func (func : Typecheck.Resolution_artifacts.extern_func)
   Types.Forall
     ( [],
       List.fold_right
-        (fun param_type acc -> Types.TFun (param_type, acc, func.is_effectful))
+        (fun param_type acc -> Types.TFun (param_type, acc, Types.effect_of_bool func.is_effectful))
         param_types return_type )
 
 let has_module_headers (program : AST.program) : bool =

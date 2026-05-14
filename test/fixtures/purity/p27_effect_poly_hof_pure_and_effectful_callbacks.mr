@@ -1,0 +1,15 @@
+# P27: Explicit effect-polymorphic HOF is pure with pure callbacks and effectful with effectful callbacks
+fn apply_poly(f: (Int) ~> Int, x: Int) ~> Int = f(x)
+
+fn pure_use(x: Int) -> Int =
+  apply_poly((n: Int) -> n + 1, x)
+
+fn effect_use(x: Int) => Int =
+  apply_poly((n: Int) => {
+    puts(n)
+    n + 2
+  }, x)
+
+puts(pure_use(40))        # output: 41
+let effect_result = effect_use(40)  # output: 40
+puts(effect_result)       # output: 42

@@ -73,6 +73,7 @@ assertRegexMatches(repo["builtin-types"], "match", "Unit", "builtin type pattern
 assertRegexDoesNotMatch(repo["builtin-types"], "match", "int", "builtin type pattern");
 
 assertAnyMatch(repo.operators.patterns, "=>", "operator patterns");
+assertAnyMatch(repo.operators.patterns, "~>", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "|>", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "&&", "operator patterns");
 assertAnyMatch(repo.operators.patterns, "||", "operator patterns");
@@ -83,6 +84,7 @@ assertAnyMatch(repo.operators.patterns, "&", "operator patterns");
 
 assert(repo["fn-declaration"], "fn-declaration repository entry is missing");
 assertRegexMatches(repo["fn-declaration"], "begin", "fn add(x: Int) -> Int = x", "fn-declaration begin");
+assertRegexMatches(repo["fn-declaration"], "begin", "fn apply(f: (Int) ~> Int) ~> Int = f(1)", "fn-declaration begin");
 
 assert(repo["lambda-expression"], "lambda-expression repository entry is missing");
 assertRegexMatches(
@@ -91,9 +93,17 @@ assertRegexMatches(
   "(x: Int) => x + 1",
   "lambda-expression begin",
 );
+assertRegexMatches(
+  repo["lambda-expression"],
+  "begin",
+  "(x: Int) ~> x + 1",
+  "lambda-expression begin",
+);
 
 assertRegexMatches(repo["function-type"], "begin", "(Int, Int) => Int", "function-type begin");
 assertRegexMatches(repo["function-type"], "end", ") => Int", "function-type end");
+assertRegexMatches(repo["function-type"], "begin", "(Int, Int) ~> Int", "function-type begin");
+assertRegexMatches(repo["function-type"], "end", ") ~> Int", "function-type end");
 assertRegexDoesNotMatch(
   repo["function-type"],
   "begin",

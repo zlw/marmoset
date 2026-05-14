@@ -8,7 +8,7 @@ type mono_type =
   | TString (* String *)
   | TNull (* Null / unit *)
   | TVar of string (* Type variable: 'a, 'b, etc. *)
-  | TFun of mono_type * mono_type * bool (* Function: T -> U, bool = is_effectful (=> vs ->) *)
+  | TFun of mono_type * mono_type * effect (* Function: T -> U, T => U, or T ~> U *)
   | TArray of mono_type (* Array: [T] *)
   | THash of mono_type * mono_type (* Hash: {K: V} *)
   | TRecord of record_field_type list * mono_type option
@@ -20,14 +20,63 @@ type mono_type =
   | TEnum of string * mono_type list (* Enum: option[Int], result[String, Int] *)
   | TNamed of string * mono_type list (* Named nominal type: User, UserId, Box[Int] *)
 
+and effect =
+  | Pure
+  | Effectful
+  | EffectPoly
+
 and record_field_type = {
   name : string;
   typ : mono_type;
 }
 
 (* Convenience constructors for function types *)
-let tfun arg ret = TFun (arg, ret, false)
-let tfun_eff arg ret = TFun (arg, ret, true)
+let tfun arg ret = TFun (arg, ret, Pure)
+let tfun_eff arg ret = TFun (arg, ret, Effectful)
+let tfun_poly arg ret = TFun (arg, ret, EffectPoly)
+
+let effect_to_arrow = function
+  | Pure -> " -> "
+  | Effectful -> " => "
+  | EffectPoly -> " ~> "
+
+let effect_is_effectful = function
+  | Effectful -> true
+  | Pure | EffectPoly -> false
+
+let effect_may_be_effectful = function
+  | Effectful | EffectPoly -> true
+  | Pure -> false
+
+let effect_allows_actual ~actual ~expected =
+  match (actual, expected) with
+  | _, EffectPoly -> true
+  | Pure, (Pure | Effectful) -> true
+  | EffectPoly, Effectful -> true
+  | Effectful, Effectful -> true
+  | (EffectPoly | Effectful), Pure -> false
+
+let effect_unifies left right =
+  match (left, right) with
+  | Pure, Pure | Effectful, Effectful | EffectPoly, EffectPoly -> true
+  | Pure, EffectPoly | EffectPoly, Pure -> true
+  | Effectful, EffectPoly | EffectPoly, Effectful -> true
+  | Pure, Effectful | Effectful, Pure -> false
+
+let combine_effect left right =
+  match (left, right) with
+  | Effectful, _ | _, Effectful -> Effectful
+  | EffectPoly, _ | _, EffectPoly -> EffectPoly
+  | Pure, Pure -> Pure
+
+let effect_of_bool is_effectful =
+  if is_effectful then
+    Effectful
+  else
+    Pure
+
+let effect_to_bool = effect_is_effectful
+
 
 (* Canonicalize record fields by name. If duplicates exist, last write wins. *)
 let normalize_record_fields (fields : record_field_type list) : record_field_type list =
@@ -120,25 +169,19 @@ and to_string = function
   | TNull -> "Unit"
   | TVar name -> name
   | TFun _ as t ->
-      let rec collect_args eff = function
+      let rec collect_args effect = function
         | TFun (arg, rest, e) ->
-            let args, ret, eff' = collect_args (eff || e) rest in
-            (arg :: args, ret, eff')
-        | t -> ([], t, eff)
+            let args, ret, effect' = collect_args (combine_effect effect e) rest in
+            (arg :: args, ret, effect')
+        | t -> ([], t, effect)
       in
-      let args, ret, eff = collect_args false t in
+      let args, ret, effect = collect_args Pure t in
       let args_str =
         match args with
         | [ single ] -> to_string_parens single (* single arg: parens if it's a function *)
         | _ -> "(" ^ String.concat ", " (List.map to_string args) ^ ")"
       in
-      let arrow =
-        if eff then
-          " => "
-        else
-          " -> "
-      in
-      args_str ^ arrow ^ to_string ret
+      args_str ^ effect_to_arrow effect ^ to_string ret
   | TArray element -> "[" ^ to_string element ^ "]"
   | THash (key, value) -> "{" ^ to_string key ^ ": " ^ to_string value ^ "}"
   | TRecord (fields, row) ->

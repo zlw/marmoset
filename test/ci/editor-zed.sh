@@ -145,6 +145,7 @@ search_fixed '"extern" @keyword.type' languages/marmoset/highlights.scm
 search_fixed '"override" @keyword.modifier' languages/marmoset/highlights.scm
 search_fixed '"wrap" @keyword' languages/marmoset/highlights.scm
 search_fixed '"=>" @operator' languages/marmoset/highlights.scm
+search_fixed '"~>" @operator' languages/marmoset/highlights.scm
 search_fixed '"|>" @operator' languages/marmoset/highlights.scm
 search_fixed '"&" @operator' languages/marmoset/highlights.scm
 search_fixed '"%" @operator' languages/marmoset/highlights.scm
@@ -227,6 +228,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
 
             fn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)
             fn adapt() -> Result[Str, FileError] = decode() wrap FileError.InvalidData
+            fn apply(f: (Int) ~> Int, x: Int) ~> Int = f(x)
 
             extern type File
 
@@ -244,6 +246,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         ("variable.parameter", "book"),
         ("type.builtin", "Map"),
         ("operator", "=>"),
+        ("operator", "~>"),
         ("function", "fibonacci"),
         ("keyword.type", "extern"),
         ("type", "File"),

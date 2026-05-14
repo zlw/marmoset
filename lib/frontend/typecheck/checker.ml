@@ -259,7 +259,7 @@ let check_program_with_annotations
       and check_expr_annotations ?(type_bindings = []) (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; effect = _; _ } -> (
             (* For generic functions, skip the return annotation check: type_callable already
                validated it during inference with proper type variable bindings.
                The second-pass check here can't reproduce the fresh-var mapping. *)

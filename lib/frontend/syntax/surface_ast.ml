@@ -27,8 +27,8 @@ module Surface = struct
     | STApp of name_ref * surface_type_expr list
     | STConstraintShorthand of name_ref list (* Bare trait names in parameter position, e.g. Named & Aged *)
     | STTraitObject of name_ref list (* Dyn[Show] or Dyn[Show & Eq] *)
-    | STArrow of surface_type_expr list * surface_type_expr * bool
-      (* bool = is_effectful; covers both (a) -> b and (a) => b *)
+    | STArrow of surface_type_expr list * surface_type_expr * AST.effect_annotation
+      (* effect = ->, =>, or ~> *)
     | STUnion of surface_type_expr list
     | STIntersection of surface_type_expr list
     | STRecord of surface_record_type_field list * surface_type_expr option
@@ -169,10 +169,10 @@ module Surface = struct
     (* — vNext surface-only forms — *)
     | SEArrowLambda of {
         se_lambda_params : surface_value_param list;
-        se_lambda_is_effectful : bool;
+        se_lambda_effect : AST.effect_annotation;
         se_lambda_body : surface_expr_or_block;
       }
-      (* (x) -> expr  or  (x, y) => expr *)
+      (* (x) -> expr, (x, y) => expr, or (x) ~> expr *)
     | SEPlaceholder (* _ in expression position; rewritten to SEArrowLambda or rejected in lowering *)
     | SEBlockExpr of surface_block
   (* { let x = 1; x + 2 } in expression position;
@@ -276,7 +276,7 @@ module Surface = struct
         generics : surface_generic_param list option;
         params : surface_value_param list;
         return_type : surface_type_expr option;
-        is_effectful : bool;
+        effect : AST.effect_annotation;
         body : surface_expr_or_block;
       }
     | STypeDef of {

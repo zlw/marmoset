@@ -463,14 +463,14 @@ let rec type_expr_to_mono_type_with
                               else
                                 Ok (Types.TEnum (enum_def.name, arg_types))
                           | None -> ann_error (type_position_error_for_constructor con_name)))))))
-  | Syntax.Ast.AST.TArrow (param_types, return_type, is_effectful) ->
+  | Syntax.Ast.AST.TArrow (param_types, return_type, effect) ->
       let* param_mono = map_result (type_expr_to_mono_type_with type_bindings) param_types in
       let* return_mono = type_expr_to_mono_type_with type_bindings return_type in
       let mk_fun arg ret =
-        if is_effectful then
-          Types.tfun_eff arg ret
-        else
-          Types.tfun arg ret
+        match effect with
+        | Syntax.Ast.AST.Pure -> Types.tfun arg ret
+        | Syntax.Ast.AST.Effectful -> Types.tfun_eff arg ret
+        | Syntax.Ast.AST.EffectPoly -> Types.tfun_poly arg ret
       in
       Ok (List.fold_right mk_fun param_mono return_mono)
   | Syntax.Ast.AST.TTraitObject traits -> Ok (Types.canonicalize_mono_type (Types.TTraitObject traits))
@@ -625,8 +625,9 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
             else
               true)
   (* Functions: contravariant in params, covariant in return *)
-  | Types.TFun (p1, r1, actual_effectful), Types.TFun (p2, r2, expected_effectful) ->
-      ((not actual_effectful) || expected_effectful) && is_subtype_of p2 p1 && is_subtype_of r1 r2
+  | Types.TFun (p1, r1, actual_effect), Types.TFun (p2, r2, expected_effect) ->
+      Types.effect_allows_actual ~actual:actual_effect ~expected:expected_effect
+      && is_subtype_of p2 p1 && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
@@ -681,13 +682,8 @@ let rec format_mono_type (t : Types.mono_type) : string =
       Printf.sprintf "{ %s%s }" (String.concat ", " field_strs) row_str
   | Types.TRowVar name -> name
   | Types.TFun (param_type, return_type, eff) ->
-      let arrow =
-        if eff then
-          " => "
-        else
-          " -> "
-      in
-      Printf.sprintf "%s%s%s" (format_mono_type param_type) arrow (format_mono_type return_type)
+      Printf.sprintf "%s%s%s" (format_mono_type param_type) (Types.effect_to_arrow eff)
+        (format_mono_type return_type)
   | Types.TTraitObject traits -> Printf.sprintf "Dyn[%s]" (String.concat " & " traits)
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TIntersection types -> String.concat " & " (List.map format_mono_type types)
@@ -894,7 +890,8 @@ let%test "intersection annotation rejects general callable intersections" =
     type_expr_to_mono_type
       (Syntax.Ast.AST.TIntersection
          [
-           Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", false);
+           Syntax.Ast.AST.TArrow
+             ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Pure);
            Syntax.Ast.AST.TCon "Bool";
          ])
   with
@@ -973,17 +970,18 @@ let%test "is_subtype_of: identical intersections are compatible" =
 let%test "Phase3: TArrow pure converts to TFun false" =
   match
     type_expr_to_mono_type
-      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", false))
+      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Pure))
   with
-  | Ok (Types.TFun (Types.TInt, Types.TInt, false)) -> true
+  | Ok (Types.TFun (Types.TInt, Types.TInt, Types.Pure)) -> true
   | _ -> false
 
 let%test "Phase3: TArrow effectful converts to TFun true" =
   match
     type_expr_to_mono_type
-      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", true))
+      (Syntax.Ast.AST.TArrow
+         ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Effectful))
   with
-  | Ok (Types.TFun (Types.TInt, Types.TInt, true)) -> true
+  | Ok (Types.TFun (Types.TInt, Types.TInt, Types.Effectful)) -> true
   | _ -> false
 
 let%test "is_subtype_of: pure function is subtype of effectful function" =

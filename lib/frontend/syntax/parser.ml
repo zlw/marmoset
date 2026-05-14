@@ -83,6 +83,16 @@ let current_name_ref (p : parser) : Surface.name_ref = name_ref_of_token p p.cur
 let name_texts (refs : Surface.name_ref list) : string list =
   List.map (fun (ref_ : Surface.name_ref) -> ref_.text) refs
 
+let effect_of_arrow_token (token_type : Token.token_type) : AST.effect_annotation option =
+  match token_type with
+  | Token.Arrow -> Some AST.Pure
+  | Token.FatArrow -> Some AST.Effectful
+  | Token.TildeArrow -> Some AST.EffectPoly
+  | _ -> None
+
+let token_is_effect_arrow (token_type : Token.token_type) : bool =
+  Option.is_some (effect_of_arrow_token token_type)
+
 let combine_name_refs (refs : Surface.name_ref list) : Surface.name_ref =
   match refs with
   | [] -> invalid_arg "combine_name_refs"
@@ -639,18 +649,14 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
   (* Parameters with optional type annotations *)
   let* p5, params = parse_function_parameters p4 in
 
-  (* Optional return type: -> T (pure) or => T (effectful) *)
-  let* p6, return_type, is_effectful =
-    if peek_token_is p5 Token.Arrow then
+  (* Optional return type: -> T (pure), => T (effectful), or ~> T (effect-polymorphic) *)
+  let* p6, return_type, effect =
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect ->
       let p6 = next_token p5 in
       let* p7, te = parse_type_expr (next_token p6) in
-      Ok (p7, Some te, false)
-    else if peek_token_is p5 Token.FatArrow then
-      let p6 = next_token p5 in
-      let* p7, te = parse_type_expr (next_token p6) in
-      Ok (p7, Some te, true)
-    else
-      Ok (p5, None, false)
+      Ok (p7, Some te, effect)
+    | None -> Ok (p5, None, AST.Pure)
   in
 
   (* Expect = *)
@@ -681,7 +687,7 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
       Ok (p9, Surface.SEOBExpr expr)
   in
 
-  Ok (p8, Surface.SFnDecl { name; name_ref; generics; params; return_type; is_effectful; body })
+  Ok (p8, Surface.SFnDecl { name; name_ref; generics; params; return_type; effect; body })
 
 and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let finalize = function
@@ -757,28 +763,27 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       in
       let* p3, params = collect_params p2 [ first ] in
       let p4 = next_token p3 in
-      let is_effectful = curr_token_is p4 Token.FatArrow in
-      if curr_token_is p4 Token.Arrow || is_effectful then
+      match effect_of_arrow_token p4.curr_token.token_type with
+      | Some effect ->
         let* p5, return_type = parse_type_expr (next_token p4) in
         Ok
           ( p5,
             with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, is_effectful))) )
-      else
-        Error (peek_error p3 Token.Arrow)
+              (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, effect))) )
+      | None -> Error (peek_error p3 Token.Arrow)
     else if curr_token_is p2 Token.RParen then
       (* Single type in parens: (Int) or (Int | Str) *)
       let p3 = next_token p2 in
-      if curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow then
-        let is_effectful = curr_token_is p3 Token.FatArrow in
+      match effect_of_arrow_token p3.curr_token.token_type with
+      | Some effect ->
         let* p5, return_type = parse_type_expr (next_token p3) in
         Ok
           ( p5,
             with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, is_effectful))) )
-      else
-        (* Just grouping: (Int) or (Int | Str) *)
-        Ok (p3, first)
+              (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, effect))) )
+      | None ->
+          (* Just grouping: (Int) or (Int | Str) *)
+          Ok (p3, first)
     else
       Error (peek_error p2 Token.RParen)
   else if curr_token_is p Token.LBrace then
@@ -1432,14 +1437,11 @@ and parse_method_sig (p : parser) : (parser * Surface.surface_method_sig, parser
       expect_peek p4 Token.RParen
   in
 
-  (* Parse effect marker: -> (pure) or => (effectful) *)
+  (* Parse effect marker: -> (pure), => (effectful), or ~> (effect-polymorphic) *)
   let* p6, sm_effect =
-    if peek_token_is p5 Token.Arrow then
-      Ok (next_token p5, AST.Pure)
-    else if peek_token_is p5 Token.FatArrow then
-      Ok (next_token p5, AST.Effectful)
-    else
-      Result.map (fun p -> (p, AST.Pure)) (expect_peek p5 Token.Arrow)
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect -> Ok (next_token p5, effect)
+    | None -> Result.map (fun p -> (p, AST.Pure)) (expect_peek p5 Token.Arrow)
   in
 
   (* Parse return type *)
@@ -1670,16 +1672,13 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
       expect_peek p4 Token.RParen
   in
 
-  (* Parse optional effect marker + return type: -> T, => T, or neither *)
+  (* Parse optional effect marker + return type: -> T, => T, ~> T, or neither *)
   let* p6, smi_return_type, smi_effect =
-    if peek_token_is p5 Token.Arrow then
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect ->
       let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type, Some AST.Pure)
-    else if peek_token_is p5 Token.FatArrow then
-      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type, Some AST.Effectful)
-    else
-      Ok (next_token p5, None, None)
+      Ok (p6, Some ret_type, Some effect)
+    | None -> Ok (next_token p5, None, None)
   in
 
   (* Parse body: = expr_or_block *)
@@ -2011,21 +2010,21 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
   (* p.curr_token = LParen *)
   (* Use Lexer.next_token to peek at the token after p.peek_token without advancing *)
   let _, peek2_tok = Lexer.next_token p.lexer in
-  (* Check for empty lambda: () -> expr or () => expr *)
+  (* Check for empty lambda: () -> expr, () => expr, or () ~> expr *)
   let is_empty_lambda =
-    peek_token_is p Token.RParen && (peek2_tok.token_type = Token.Arrow || peek2_tok.token_type = Token.FatArrow)
+    peek_token_is p Token.RParen && token_is_effect_arrow peek2_tok.token_type
   in
   (* Check for multi-param or typed-param lambda: (a, b) -> or (a: T) -> *)
   let is_multi_or_typed =
     peek_token_is p Token.Ident && (peek2_tok.token_type = Token.Comma || peek2_tok.token_type = Token.Colon)
   in
   if is_empty_lambda then
-    (* () -> expr or () => expr *)
+    (* () -> expr, () => expr, or () ~> expr *)
     let p2 = next_token p in
     (* at ) *)
     let p3 = next_token p2 in
-    (* at -> or => *)
-    let is_effectful = curr_token_is p3 Token.FatArrow in
+    (* at ->, =>, or ~> *)
+    let effect = Option.value (effect_of_arrow_token p3.curr_token.token_type) ~default:AST.Pure in
     let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
     let id = fresh_id p4 in
     Ok
@@ -2035,7 +2034,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
              (Surface.SEArrowLambda
                 {
                   se_lambda_params = [];
-                  se_lambda_is_effectful = is_effectful;
+                  se_lambda_effect = effect;
                   se_lambda_body = Surface.SEOBExpr body_expr;
                 })) )
   else if is_multi_or_typed then
@@ -2043,10 +2042,10 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
     let* p2, lparams = parse_lambda_param_list (next_token p) in
     (* p2 should be at ) after params *)
     let p3 = next_token p2 in
-    (* past ) -> at -> or => *)
-    let is_effectful = curr_token_is p3 Token.FatArrow in
-    if not (curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow) then
-      Error (add_error ~code:"parse-unexpected-token" p3 "expected '->' or '=>' after lambda params")
+    (* past ) -> at ->, =>, or ~> *)
+    let effect = effect_of_arrow_token p3.curr_token.token_type in
+    if Option.is_none effect then
+      Error (add_error ~code:"parse-unexpected-token" p3 "expected '->', '=>', or '~>' after lambda params")
     else
       let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
       let id = fresh_id p4 in
@@ -2057,7 +2056,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
                (Surface.SEArrowLambda
                   {
                     se_lambda_params = lparams;
-                    se_lambda_is_effectful = is_effectful;
+                    se_lambda_effect = Option.get effect;
                     se_lambda_body = Surface.SEOBExpr body_expr;
                   })) )
   else
@@ -2065,12 +2064,12 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
     let* p2, expr = parse_expression (next_token p) prec_lowest in
     let* p3 = expect_peek p2 Token.RParen in
     (* Check for single-ident lambda: (x) -> expr *)
-    if peek_token_is p3 Token.Arrow || peek_token_is p3 Token.FatArrow then
+    if token_is_effect_arrow p3.peek_token.token_type then
       match expr.Surface.se_expr with
       | Surface.SEIdentifier name ->
           let p4 = next_token p3 in
-          (* at -> or => *)
-          let is_effectful = curr_token_is p4 Token.FatArrow in
+          (* at ->, =>, or ~> *)
+          let effect = Option.value (effect_of_arrow_token p4.curr_token.token_type) ~default:AST.Pure in
           let* p5, body_expr = parse_expression (next_token p4) prec_lowest in
           let id = fresh_id p5 in
           Ok
@@ -2081,7 +2080,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
                       {
                         se_lambda_params =
                           [ Surface.{ svp_name = name.text; svp_name_ref = name; svp_type = None } ];
-                        se_lambda_is_effectful = is_effectful;
+                        se_lambda_effect = effect;
                         se_lambda_body = Surface.SEOBExpr body_expr;
                       })) )
       | _ -> Ok (p3, expr)
@@ -3042,7 +3041,7 @@ module Test = struct
   (* Helper for Function expressions with the new record structure *)
   let fn_expr params body =
     AST.Function
-      { origin = AST.DeclaredFunction; generics = None; params; return_type = None; is_effectful = false; body }
+      { origin = AST.DeclaredFunction; generics = None; params; return_type = None; effect = AST.Pure; body }
 
   let run (tests : test list) : bool =
     tests
@@ -3883,7 +3882,7 @@ module Test = struct
                           {
                             params = [ ("x", Some (AST.TCon "Int")) ];
                             return_type = Some (AST.TCon "Int");
-                            is_effectful = false;
+                            effect = AST.Pure;
                             _;
                           };
                       _;
@@ -3920,7 +3919,7 @@ module Test = struct
         [
           {
             AST.stmt =
-              AST.Let { name = "greet"; value = { AST.expr = AST.Function { is_effectful = true; _ }; _ }; _ };
+              AST.Let { name = "greet"; value = { AST.expr = AST.Function { effect = AST.Effectful; _ }; _ }; _ };
             _;
           };
         ] ->
@@ -4717,7 +4716,7 @@ module Test = struct
         match result.program with
         | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
             match e.se_expr with
-            | Surface.SEArrowLambda { se_lambda_is_effectful = true; _ } -> true
+            | Surface.SEArrowLambda { se_lambda_effect = AST.Effectful; _ } -> true
             | _ -> false)
         | _ -> false)
 
@@ -5210,7 +5209,7 @@ let%test "parse transparent type with function type body" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false) -> true
+              | AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -5295,7 +5294,7 @@ let%test "parse type intersection parenthesizes function members" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] ->
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", AST.Pure); AST.TCon "Bool" ] ->
                   true
               | _ -> false)
           | _ -> false)
@@ -5313,7 +5312,7 @@ let%test "parse function parameter annotation with function type" =
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
               | [
-               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false))); ("x", Some (AST.TCon "Int"));
+               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure))); ("x", Some (AST.TCon "Int"));
               ] ->
                   true
               | _ -> false)

@@ -118,8 +118,9 @@ let rec to_mono_type = function
   | BStdBytes -> TNamed (std_bytes_type_name, [])
   | BExternHandle handle -> TNamed (handle.extern_type_name, [])
   | BCallback callback ->
+      let callback_effect = effect_of_bool callback.callback_effectful in
       List.fold_right
-        (fun param acc -> TFun (to_mono_type param, acc, callback.callback_effectful))
+        (fun param acc -> TFun (to_mono_type param, acc, callback_effect))
         callback.callback_params
         (to_mono_type callback.callback_return)
 
@@ -158,7 +159,7 @@ let unsupported ?source_span ~(typ : mono_type) () =
 
 let flatten_callback_type (typ : mono_type) : mono_type list * mono_type * bool =
   let rec go acc effectful = function
-    | TFun (arg, ret, eff) -> go (arg :: acc) (effectful || eff) ret
+    | TFun (arg, ret, eff) -> go (arg :: acc) (effectful || effect_is_effectful eff) ret
     | ret -> (List.rev acc, ret, effectful)
   in
   go [] false typ
@@ -272,7 +273,7 @@ let%test "classifies imported module enum payloads" =
   | _ -> false
 
 let%test "classifies direct callback parameters only when allowed" =
-  let callback = TFun (TString, TFun (TInt, TString, false), false) in
+  let callback = TFun (TString, TFun (TInt, TString, Pure), Pure) in
   match classify ~owner_module_id:"std.bytes" ~allow_callback:true callback with
   | Ok (BCallback { callback_params = [ BStr; BInt ]; callback_return = BStr; callback_effectful = false }) -> (
       match classify ~owner_module_id:"std.bytes" callback with

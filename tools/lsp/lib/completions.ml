@@ -430,14 +430,14 @@ let visible_enum_variants ~(analysis : Doc_state.analysis_result) ~(type_name : 
   | _ -> None
 
 let method_poly_detail (method_sig : Trait_registry.method_sig) : string =
-  let is_effectful = method_sig.method_effect = `Effectful in
+  let effect = Infer.effect_of_trait_effect method_sig.method_effect in
   let fn_type =
     List.fold_right
       (fun (_name, typ) acc ->
-        if is_effectful then
-          Types.tfun_eff typ acc
-        else
-          Types.tfun typ acc)
+        match effect with
+        | Types.Pure -> Types.tfun typ acc
+        | Types.Effectful -> Types.tfun_eff typ acc
+        | Types.EffectPoly -> Types.tfun_poly typ acc)
       method_sig.method_params method_sig.method_return_type
   in
   detail_of_poly (Types.Forall (List.map fst method_sig.method_generics, fn_type))

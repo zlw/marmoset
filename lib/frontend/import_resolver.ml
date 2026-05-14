@@ -760,11 +760,11 @@ let rec rewrite_type_expr
       AST.TApp (rewrite_name name, List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) args)
   | AST.TTraitObject traits ->
       AST.TTraitObject (rewrite_constraints ~imports ~type_bindings ~available_bindings traits)
-  | AST.TArrow (params, ret, is_effectful) ->
+  | AST.TArrow (params, ret, effect) ->
       AST.TArrow
         ( List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) params,
           rewrite_type_expr ~imports ~type_bindings ~available_bindings ret,
-          is_effectful )
+          effect )
   | AST.TUnion members ->
       AST.TUnion (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) members)
   | AST.TIntersection members ->
@@ -873,11 +873,11 @@ let rewrite_program
       | AST.TApp (name, args) ->
           AST.TApp (canonical_std_extern_type_name name, List.map canonicalize_std_extern_type_expr args)
       | AST.TTraitObject _ -> te
-      | AST.TArrow (params, ret, is_effectful) ->
+      | AST.TArrow (params, ret, effect) ->
           AST.TArrow
             ( List.map canonicalize_std_extern_type_expr params,
               canonicalize_std_extern_type_expr ret,
-              is_effectful )
+              effect )
       | AST.TUnion members -> AST.TUnion (List.map canonicalize_std_extern_type_expr members)
       | AST.TIntersection members -> AST.TIntersection (List.map canonicalize_std_extern_type_expr members)
       | AST.TRecord (fields, row) ->
@@ -1299,7 +1299,7 @@ let rewrite_program
               Ok (Some (fst stmt))
         in
         Ok AST.{ expr with expr = If (cond, cons, alt) }
-    | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
+    | AST.Function { origin; generics; params; return_type; effect; body } ->
         let type_bindings =
           match generics with
           | None -> type_bindings
@@ -1327,7 +1327,7 @@ let rewrite_program
         in
         let* body = rewrite_statement ~at_top_level:false ~type_bindings value_scope body in
         let body = fst body in
-        Ok AST.{ expr with expr = Function { origin; generics; params; return_type; is_effectful; body } }
+        Ok AST.{ expr with expr = Function { origin; generics; params; return_type; effect; body } }
     | AST.Call (callee, args) ->
         let* callee = rewrite_expr ~value_scope ~type_bindings callee in
         let* args = map_result (rewrite_expr ~value_scope ~type_bindings) args in

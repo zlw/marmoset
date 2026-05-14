@@ -7,7 +7,7 @@ module AST = struct
     | TCon of string (* 'Int', 'Str', 'List', 'Map', 'Option' *)
     | TApp of string * type_expr list (* List[Int], Map[Str, Int], Option[a] *)
     | TTraitObject of string list (* Dyn[Show], Dyn[Show & Eq] *)
-    | TArrow of type_expr list * type_expr * bool (* (Int, Str) -> Bool; bool = is_effectful *)
+    | TArrow of type_expr list * type_expr * effect_annotation (* (Int, Str) -> Bool / => / ~> *)
     | TUnion of type_expr list (* Int | Str | Bool *)
     | TIntersection of type_expr list (* Int & Named; Dyn[Show] & Dyn[Eq] *)
     | TRecord of record_type_field list * type_expr option
@@ -68,6 +68,7 @@ module AST = struct
   and effect_annotation =
     | Pure
     | Effectful
+    | EffectPoly
   [@@deriving show]
 
   and method_sig = {
@@ -218,7 +219,7 @@ module AST = struct
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)
-        is_effectful : bool; (* true when => is used instead of -> *)
+        effect : effect_annotation; (* ->, =>, or ~> *)
         body : statement;
       }
     | Call of expression * expression list
@@ -480,7 +481,7 @@ module AST = struct
             (match alt with
             | Some a -> Printf.sprintf " else %s" (block_to_string a)
             | None -> "")
-      | Function f -> function_to_string f.params f.is_effectful f.body
+      | Function f -> function_to_string f.params f.effect f.body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
@@ -525,16 +526,14 @@ module AST = struct
             (args_to_string mc_args)
       | BlockExpr stmts -> Printf.sprintf "{ %s }" (List.map statement_to_string stmts |> String.concat " ")
     and block_to_string (block : statement) : string = statement_to_string block
-    and function_to_string (params : (string * type_expr option) list) (is_effectful : bool) (body : statement) :
+    and arrow_of_effect = function
+      | Pure -> "->"
+      | Effectful -> "=>"
+      | EffectPoly -> "~>"
+    and function_to_string (params : (string * type_expr option) list) (effect : effect_annotation) (body : statement) :
         string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
-      let arrow =
-        if is_effectful then
-          "=>"
-        else
-          "->"
-      in
-      Printf.sprintf "(%s) %s %s" param_str arrow (block_to_string body)
+      Printf.sprintf "(%s) %s %s" param_str (arrow_of_effect effect) (block_to_string body)
     and args_to_string (args : expression list) : string =
       List.map expression_to_string args |> String.concat ", "
     in

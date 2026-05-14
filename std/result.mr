@@ -8,17 +8,17 @@ impl Result[a, e] = {
     case Result.Failure(_): fallback
   }
 
-  fn map[b](self: Result[a, e], f: (a) -> b) -> Result[b, e] = match self {
+  fn map[b](self: Result[a, e], f: (a) ~> b) ~> Result[b, e] = match self {
     case Result.Success(v): Result.Success(f(v))
     case Result.Failure(err): Result.Failure(err)
   }
 
-  fn wrap[b](self: Result[a, e], f: (e) -> b) -> Result[a, b] = match self {
+  fn wrap[b](self: Result[a, e], f: (e) ~> b) ~> Result[a, b] = match self {
     case Result.Success(v): Result.Success(v)
     case Result.Failure(err): Result.Failure(f(err))
   }
 
-  fn bind[b](self: Result[a, e], f: (a) -> Result[b, e]) -> Result[b, e] = match self {
+  fn bind[b](self: Result[a, e], f: (a) ~> Result[b, e]) ~> Result[b, e] = match self {
     case Result.Success(v): f(v)
     case Result.Failure(err): Result.Failure(err)
   }

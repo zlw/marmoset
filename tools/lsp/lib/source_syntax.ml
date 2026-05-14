@@ -91,7 +91,8 @@ let collapse_purity_union (types : Types.mono_type list) : Types.mono_type list 
       List.iter
         (fun b ->
           match (a, b) with
-          | Types.TFun (arg1, ret1, false), Types.TFun (arg2, ret2, true) when arg1 = arg2 && ret1 = ret2 ->
+          | Types.TFun (arg1, ret1, Types.Pure), Types.TFun (arg2, ret2, Types.Effectful)
+            when arg1 = arg2 && ret1 = ret2 ->
               Hashtbl.replace dominated (Types.to_string a) true
           | _ -> ())
         types)
@@ -115,25 +116,19 @@ let rec mono_type_to_source ?(type_var_user_names = []) (mono : Types.mono_type)
       ^ mono_type_to_source ~type_var_user_names value
       ^ "]"
   | Types.TFun _ ->
-      let rec collect_args eff = function
+      let rec collect_args effect = function
         | Types.TFun (arg, rest, e) ->
-            let args, ret, eff' = collect_args (eff || e) rest in
-            (arg :: args, ret, eff')
-        | t -> ([], t, eff)
+            let args, ret, effect' = collect_args (Types.combine_effect effect e) rest in
+            (arg :: args, ret, effect')
+        | t -> ([], t, effect)
       in
-      let args, ret, is_eff = collect_args false mono in
+      let args, ret, effect = collect_args Types.Pure mono in
       let args_str =
         match args with
         | [ single ] -> "(" ^ mono_type_to_source_parens ~type_var_user_names single ^ ")"
         | _ -> "(" ^ String.concat ", " (List.map (mono_type_to_source ~type_var_user_names) args) ^ ")"
       in
-      let arrow =
-        if is_eff then
-          " => "
-        else
-          " -> "
-      in
-      args_str ^ arrow ^ mono_type_to_source ~type_var_user_names ret
+      args_str ^ Types.effect_to_arrow effect ^ mono_type_to_source ~type_var_user_names ret
   | Types.TRecord (fields, row) ->
       let field_strs =
         List.map
@@ -233,13 +228,13 @@ let rec type_expr_to_source (te : Ast.AST.type_expr) : string =
   | Ast.AST.TCon name -> canonical_type_name name
   | Ast.AST.TApp (name, args) ->
       Printf.sprintf "%s[%s]" (canonical_type_name name) (String.concat ", " (List.map type_expr_to_source args))
-  | Ast.AST.TArrow (params, ret, effectful) ->
+  | Ast.AST.TArrow (params, ret, effect) ->
       Printf.sprintf "(%s) %s %s"
         (String.concat ", " (List.map type_expr_to_source params))
-        (if effectful then
-           "=>"
-         else
-           "->")
+        (match effect with
+        | Ast.AST.Pure -> "->"
+        | Ast.AST.Effectful -> "=>"
+        | Ast.AST.EffectPoly -> "~>")
         (type_expr_to_source ret)
   | Ast.AST.TUnion types -> String.concat " | " (List.map type_expr_to_source types)
   | Ast.AST.TIntersection types -> String.concat " & " (List.map type_expr_to_source_intersection_member types)
@@ -278,7 +273,7 @@ let%test "mono_type_to_source renders intersections with precedence" =
 let%test "type_expr_to_source renders intersections with precedence" =
   type_expr_to_source
     (Ast.AST.TIntersection
-       [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", false); Ast.AST.TCon "Bool" ])
+       [ Ast.AST.TArrow ([ Ast.AST.TCon "Int" ], Ast.AST.TCon "Str", Ast.AST.Pure); Ast.AST.TCon "Bool" ])
   = "((Int) -> Str) & Bool"
 
 let%test "canonical_type_name drops internal module prefixes" = canonical_type_name "math__Point" = "Point"

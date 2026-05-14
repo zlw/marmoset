@@ -256,7 +256,7 @@ class MarmosetLexer : LexerBase() {
             ch == '_' || ch == '?' || ch.isLetterOrDigit()
 
         private fun isOperator(ch: Char): Boolean =
-            ch in "=!+-*/%<>|&"
+            ch in "=!+-*/%<>|&~"
 
         private fun isPunctuation(ch: Char): Boolean =
             ch in "(){}[],:;."

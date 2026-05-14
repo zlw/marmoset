@@ -47,33 +47,42 @@ extern "std/file" as file_shim = {
 fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
   bytes.Decode.decode(payload) wrap Error.InvalidData
 
-fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = match payload {
-  case Option.Some(bytes): decode_bytes(bytes) |> Result.map(Option.Some(_))
-  case Option.None: Result.Success(Option.None)
+fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = {
+  match payload {
+    case Option.None: Result.Success(Option.None)
+    case Option.Some(bytes): {
+      decode_bytes(bytes)
+      |> Result.map(Option.Some(_))
+    }
+  }
 }
 
 fn read[a: Decode](path: path.Path) => Result[a, Error] = {
-  let payload = try file_shim.read_path(path)
-  decode_bytes(payload)
+  file_shim.read_path(path)
+  |> Result.bind((payload: Bytes) -> decode_bytes(payload))
 }
 
-fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
-  bytes.Encode.encode(value) |> file_shim.write_path(path, _)
+fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] = {
+  bytes.Encode.encode(value)
+  |> file_shim.write_path(path, _)
+}
 
-fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] =
-  bytes.Encode.encode(value) |> file_shim.append_path(path, _)
+fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] = {
+  bytes.Encode.encode(value)
+  |> file_shim.append_path(path, _)
+}
 
 impl io.Read[File, Error] = {
   fn read(file: File) => Result[Str, Error] = {
-    let payload = try file_shim.read_handle(file)
-    let value = try decode_bytes(payload)
-    Result.Success(value)
+    file_shim.read_handle(file)
+    |> Result.bind((payload: Bytes) -> decode_bytes(payload))
   }
 }
 
 impl io.Write[File, Error] = {
   fn write(file: File, value: Str) => Result[Unit, Error] = {
-    bytes.Encode.encode(value) |> file_shim.write_handle(file, _)
+    bytes.Encode.encode(value)
+    |> file_shim.write_handle(file, _)
   }
 
   fn flush(file: File) => Result[Unit, Error] = {
@@ -85,8 +94,8 @@ fn read_all(file: File) => Result[Str, Error] =
   io.Read.read(file)
 
 fn read_line(file: File) => Result[Option[Str], Error] = {
-  let payload = try file_shim.read_line_handle(file)
-  decode_optional_bytes(payload)
+  file_shim.read_line_handle(file)
+  |> Result.bind((payload: Option[Bytes]) -> decode_optional_bytes(payload))
 }
 
 fn read_chunk(file: File, size: Int) => Result[Option[Bytes], Error] =

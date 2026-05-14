@@ -48,7 +48,7 @@ let rec function_is_effectful n mono =
     false
   else
     match mono with
-    | Types.TFun (_, rest, is_effectful) -> is_effectful || function_is_effectful (n - 1) rest
+    | Types.TFun (_, rest, effect) -> Types.effect_is_effectful effect || function_is_effectful (n - 1) rest
     | _ -> false
 
 (* Extract the return type of a function with n parameters *)
@@ -440,7 +440,7 @@ let%test "type_to_source effectful function" =
   type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(Int) => Bool"
 
 let%test "type_to_source mixed purity multi-arg" =
-  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, true), false))
+  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, Types.Effectful), Types.Pure))
   = "(Int, Str) => Bool"
 
 let%test "type_to_source union of pure/effectful collapses to effectful" =

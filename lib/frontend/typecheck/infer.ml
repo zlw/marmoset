@@ -10,6 +10,20 @@ module String_utils = Diagnostics.String_utils
 
 let ( let* ) = Result.bind
 
+let effect_of_ast : AST.effect_annotation -> effect = function
+  | AST.Pure -> Pure
+  | AST.Effectful -> Effectful
+  | AST.EffectPoly -> EffectPoly
+
+let ast_effect_is_effectful = function
+  | AST.Effectful -> true
+  | AST.Pure | AST.EffectPoly -> false
+
+let effect_of_trait_effect = function
+  | `Pure -> Pure
+  | `Effectful -> Effectful
+  | `EffectPoly -> EffectPoly
+
 let map_result f xs =
   let rec loop rev_acc = function
     | [] -> Ok (List.rev rev_acc)
@@ -183,7 +197,8 @@ let create_inference_state () : inference_state =
 let active_inference_state : inference_state ref = ref (create_inference_state ())
 let global_call_resolution_store : (int, Resolution_artifacts.call_resolution) Hashtbl.t = Hashtbl.create 256
 let global_method_type_args_store : (int, mono_type list) Hashtbl.t = Hashtbl.create 64
-let global_effectful_method_call_store : (int, bool) Hashtbl.t = Hashtbl.create 128
+let global_effectful_method_call_store : (int, effect) Hashtbl.t = Hashtbl.create 128
+let global_call_effect_store : (int, effect) Hashtbl.t = Hashtbl.create 128
 
 let global_trait_object_coercion_store : (int, Resolution_artifacts.trait_object_coercion) Hashtbl.t =
   Hashtbl.create 64
@@ -381,6 +396,7 @@ let clear_call_resolution_store () : unit =
   Hashtbl.clear global_call_resolution_store;
   Hashtbl.clear global_method_type_args_store;
   Hashtbl.clear global_effectful_method_call_store;
+  Hashtbl.clear global_call_effect_store;
   Hashtbl.clear global_trait_object_coercion_store;
   Hashtbl.clear global_placeholder_rewrite_store;
   Hashtbl.clear global_method_def_store;
@@ -487,12 +503,26 @@ let lookup_call_resolution (expr_id : int) : Resolution_artifacts.call_resolutio
   Hashtbl.find_opt global_call_resolution_store expr_id
 
 let record_effectful_method_call (expr : AST.expression) (is_effectful : bool) : unit =
-  Hashtbl.replace global_effectful_method_call_store expr.id is_effectful
+  Hashtbl.replace global_effectful_method_call_store expr.id (effect_of_bool is_effectful)
+
+let record_method_call_effect (expr : AST.expression) (method_effect : effect) : unit =
+  Hashtbl.replace global_effectful_method_call_store expr.id method_effect
 
 let lookup_effectful_method_call (expr_id : int) : bool =
   match Hashtbl.find_opt global_effectful_method_call_store expr_id with
-  | Some is_effectful -> is_effectful
+  | Some effect -> effect_is_effectful effect
   | None -> false
+
+let lookup_method_call_effect (expr_id : int) : effect =
+  match Hashtbl.find_opt global_effectful_method_call_store expr_id with
+  | Some effect -> effect
+  | None -> Pure
+
+let record_call_effect (expr : AST.expression) (call_effect : effect) : unit =
+  Hashtbl.replace global_call_effect_store expr.id call_effect
+
+let lookup_call_effect (expr_id : int) : effect option =
+  Hashtbl.find_opt global_call_effect_store expr_id
 
 let snapshot_call_resolution_store () : (int, Resolution_artifacts.call_resolution) Hashtbl.t =
   Hashtbl.copy global_call_resolution_store
@@ -993,7 +1023,7 @@ let instantiate_method_generics_for_value (method_sig : Trait_registry.method_si
 
 let callable_type_of_method_sig (method_sig : Trait_registry.method_sig) : mono_type =
   List.fold_right
-    (fun (_param_name, param_type) acc -> TFun (param_type, acc, method_sig.method_effect = `Effectful))
+    (fun (_param_name, param_type) acc -> TFun (param_type, acc, effect_of_trait_effect method_sig.method_effect))
     method_sig.method_params method_sig.method_return_type
 
 let resolve_dotted_type_name (name : string) : mono_type option =
@@ -1122,7 +1152,9 @@ let binding_type_for_env
 let mono_type_of_extern_func (func : Resolution_artifacts.extern_func) : mono_type =
   let param_types = List.map Shim_boundary.to_mono_type func.param_boundary_types in
   let return_type = Shim_boundary.to_mono_type func.return_boundary_type in
-  List.fold_right (fun param_type acc -> TFun (param_type, acc, func.is_effectful)) param_types return_type
+  List.fold_right
+    (fun param_type acc -> TFun (param_type, acc, effect_of_bool func.is_effectful))
+    param_types return_type
 
 let should_monomorphize_let_binding_value (value_expr : AST.expression) : bool =
   match value_expr.expr with
@@ -1552,7 +1584,7 @@ let provisional_function_type
     (generics_opt : AST.generic_param list option)
     (params : (string * AST.type_expr option) list)
     (return_annot : AST.type_expr option)
-    (is_effectful : bool) : (mono_type, Diagnostic.t) result =
+    (effect : AST.effect_annotation) : (mono_type, Diagnostic.t) result =
   let local_type_var_map =
     match generics_opt with
     | None -> []
@@ -1596,12 +1628,12 @@ let provisional_function_type
       | Error _ as e -> e
       | Ok rev_param_types ->
           let param_types = List.rev rev_param_types in
-          Ok
-            (List.fold_right (fun param_type acc -> TFun (param_type, acc, is_effectful)) param_types return_type)
+          let function_effect = effect_of_ast effect in
+          Ok (List.fold_right (fun param_type acc -> TFun (param_type, acc, function_effect)) param_types return_type)
       )
 
 let provisional_placeholder_section_type ?(outer_type_bindings = []) () : (mono_type, Diagnostic.t) result =
-  provisional_function_type ~outer_type_bindings None [ ("__section_param", None) ] None false
+  provisional_function_type ~outer_type_bindings None [ ("__section_param", None) ] None AST.Pure
 
 type symbol_scope = symbol_id NameMap.t
 type symbol_scope_stack = symbol_scope list
@@ -2102,8 +2134,8 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
         (* If expressions *)
         | AST.If (condition, consequence, alternative) -> infer_if type_map env condition consequence alternative
         (* Function literals *)
-        | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
-            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~is_effectful ~body
+        | AST.Function { origin; generics; params; return_type; effect; body } ->
+            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~effect ~body
         (* Function calls *)
         | AST.Call (func, args) -> infer_call type_map env expr func args
         | AST.TypeApply (func, type_args) -> infer_type_apply type_map env expr func type_args
@@ -2213,7 +2245,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       let result_type = TEnum (enum_name, fresh_vars) in
                       let callable_type =
                         List.fold_right
-                          (fun field_type acc -> TFun (field_type, acc, false))
+                          (fun field_type acc -> TFun (field_type, acc, Pure))
                           field_types result_type
                       in
                       Ok (empty_substitution, callable_type))
@@ -2815,7 +2847,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                      mca_subst = compose_substitution subst_field_call subst_field;
                                      mca_return_type = field_call_type;
                                      mca_resolution = FieldFunctionCall;
-                                     mca_effectful = type_may_be_effectful_callable field_callee_type';
+                                     mca_effectful = effect_is_effectful (type_callable_effect field_callee_type');
                                      mca_method_type_args = None;
                                    }))
                   in
@@ -3009,7 +3041,7 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                 ~(call_target : string)
                 ~(receiver_check : (mono_type -> (unit, Diagnostic.t) result) option)
                 (method_sig : Trait_registry.method_sig) :
-                (substitution * mono_type * mono_type list) infer_result =
+                (substitution * mono_type * mono_type list * effect) infer_result =
               match instantiate_method_generics_for_call ~mk_error method_sig with
               | Error e -> Error e
               | Ok (instantiated_sig, method_subst) -> (
@@ -3041,11 +3073,21 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                                   let return_type =
                                     apply_substitution final_subst instantiated_sig.method_return_type
                                   in
+                                  let resolved_param_types =
+                                    List.map (apply_substitution final_subst) param_types
+                                  in
+                                  let resolved_arg_types = List.map (apply_substitution final_subst) arg_types in
+                                  let call_effect =
+                                    resolve_effect_polymorphic_call
+                                      (effect_of_trait_effect instantiated_sig.method_effect)
+                                      resolved_param_types resolved_arg_types
+                                  in
                                   Ok
                                     ( final_subst,
                                       return_type,
                                       resolved_method_type_args instantiated_sig.method_generics method_subst
-                                        final_subst )))))
+                                        final_subst,
+                                      call_effect )))))
             in
             let infer_qualified_trait_call (trait_name : string) : (substitution * mono_type) infer_result =
               let mk_error ~code ~message = error_at ~code ~message expr in
@@ -3132,9 +3174,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                             trait_instantiated_sig
                         with
                         | Error e -> Error e
-                        | Ok (final_subst, return_type, resolved_method_type_args) ->
+                        | Ok (final_subst, return_type, resolved_method_type_args, call_effect) ->
                             record_call_resolution expr (QualifiedTraitMethod trait_name);
                             record_method_type_args expr resolved_method_type_args;
+                            record_method_call_effect expr call_effect;
                             Ok (final_subst, return_type)
                       in
                       match args with
@@ -3217,10 +3260,10 @@ let rec infer_expression (type_map : type_map) (env : type_env) (expr : AST.expr
                       ~receiver_check:None method_sig
                   with
                   | Error e -> Error e
-                  | Ok (final_subst, return_type, resolved_method_type_args) ->
+                  | Ok (final_subst, return_type, resolved_method_type_args, call_effect) ->
                       record_call_resolution expr QualifiedInherentMethod;
                       record_method_type_args expr resolved_method_type_args;
-                      record_effectful_method_call expr (method_sig.method_effect = `Effectful);
+                      record_method_call_effect expr call_effect;
                       Ok (final_subst, return_type))
             in
             match receiver.expr with
@@ -3719,76 +3762,126 @@ and collect_and_unify_returns type_map env expected_ret_type (stmt : AST.stateme
    - Case 3: Infer effectfulness for unannotated functions
 *)
 
-and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool =
+and body_effect (type_map : type_map) (stmt : AST.statement) : effect =
   match stmt.stmt with
-  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> false
-  | AST.Let { value; _ } -> expr_has_effectful_call type_map value
-  | AST.Return expr -> expr_has_effectful_call type_map expr
-  | AST.ExpressionStmt expr -> expr_has_effectful_call type_map expr
-  | AST.Block stmts -> List.exists (body_has_effectful_call type_map) stmts
+  | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.ExternTypeDef _ -> Pure
+  | AST.Let { value; _ } -> expr_effect type_map value
+  | AST.Return expr -> expr_effect type_map expr
+  | AST.ExpressionStmt expr -> expr_effect type_map expr
+  | AST.Block stmts -> List.fold_left (fun acc stmt -> combine_effect acc (body_effect type_map stmt)) Pure stmts
   | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
   | AST.DeriveDef _ | AST.TypeAlias _ ->
-      false
+      Pure
 
-and type_may_be_effectful_callable (typ : mono_type) : bool =
-  match typ with
-  | TFun (_, _, true) -> true
-  | TUnion members -> List.exists type_may_be_effectful_callable members
-  | _ -> false
+and body_has_effectful_call (type_map : type_map) (stmt : AST.statement) : bool =
+  effect_is_effectful (body_effect type_map stmt)
+
+and type_callable_effect (typ : mono_type) : effect =
+  match canonicalize_mono_type typ with
+  | TFun (_, _, effect) -> effect
+  | TUnion members -> List.fold_left (fun acc member -> combine_effect acc (type_callable_effect member)) Pure members
+  | _ -> Pure
+
+and effect_poly_argument_effect (expected : mono_type) (actual : mono_type) : effect option =
+  match (canonicalize_mono_type expected, canonicalize_mono_type actual) with
+  | TFun (_, _, EffectPoly), actual_callable -> Some (type_callable_effect actual_callable)
+  | TFun (expected_arg, expected_ret, _), TFun (actual_arg, actual_ret, _) ->
+      let arg_effect = effect_poly_argument_effect expected_arg actual_arg in
+      let ret_effect = effect_poly_argument_effect expected_ret actual_ret in
+      (match (arg_effect, ret_effect) with
+      | None, None -> None
+      | Some effect, None | None, Some effect -> Some effect
+      | Some left, Some right -> Some (combine_effect left right))
+  | _ -> None
+
+and effect_from_poly_arguments expected_types actual_types : bool * effect =
+  let rec loop seen acc expected actual =
+    match (expected, actual) with
+    | expected_type :: expected_rest, actual_type :: actual_rest -> (
+        match effect_poly_argument_effect expected_type actual_type with
+        | None -> loop seen acc expected_rest actual_rest
+        | Some effect -> loop true (combine_effect acc effect) expected_rest actual_rest)
+    | _ -> (seen, acc)
+  in
+  loop false Pure expected_types actual_types
+
+and resolve_effect_polymorphic_call declared_effect expected_types actual_types : effect =
+  match declared_effect with
+  | EffectPoly ->
+      let has_poly_args, poly_arg_effect = effect_from_poly_arguments expected_types actual_types in
+      if has_poly_args then
+        poly_arg_effect
+      else
+        EffectPoly
+  | effect -> effect
+
+and expr_effect (type_map : type_map) (expr : AST.expression) : effect =
+  match expr.expr with
+  | AST.TypeApply (callee, _type_args) -> expr_effect type_map callee
+  | AST.Call (func, args) ->
+      let call_effect =
+        match lookup_call_effect expr.id with
+        | Some effect -> effect
+        | None -> (
+            match Hashtbl.find_opt type_map func.id with
+            | Some typ -> type_callable_effect typ
+            | _ -> Pure)
+      in
+      List.fold_left
+        (fun acc arg -> combine_effect acc (expr_effect type_map arg))
+        (combine_effect call_effect (expr_effect type_map func))
+        args
+  | AST.MethodCall { mc_receiver; mc_args; _ } ->
+      let method_effect = lookup_method_call_effect expr.id in
+      List.fold_left
+        (fun acc arg -> combine_effect acc (expr_effect type_map arg))
+        (combine_effect method_effect (expr_effect type_map mc_receiver))
+        mc_args
+  | AST.If (cond, then_branch, else_branch) -> (
+      combine_effect (expr_effect type_map cond)
+        (combine_effect (body_effect type_map then_branch)
+           (match else_branch with
+           | None -> Pure
+           | Some b -> body_effect type_map b)))
+  | AST.Function _ -> Pure (* defining a function is not calling one *)
+  | AST.Prefix (_, e) -> expr_effect type_map e
+  | AST.Infix (l, _, r) -> combine_effect (expr_effect type_map l) (expr_effect type_map r)
+  | AST.Array elements -> List.fold_left (fun acc elem -> combine_effect acc (expr_effect type_map elem)) Pure elements
+  | AST.Index (arr, idx) -> combine_effect (expr_effect type_map arr) (expr_effect type_map idx)
+  | AST.Hash pairs ->
+      List.fold_left
+        (fun acc (k, v) -> combine_effect acc (combine_effect (expr_effect type_map k) (expr_effect type_map v)))
+        Pure pairs
+  | AST.Match (scrutinee, arms) ->
+      List.fold_left
+        (fun acc (arm : AST.match_arm) -> combine_effect acc (expr_effect type_map arm.body))
+        (expr_effect type_map scrutinee) arms
+  | AST.Try { tried; fallback; _ } ->
+      combine_effect (expr_effect type_map tried)
+        (fallback |> Option.map (expr_effect type_map) |> Option.value ~default:Pure)
+  | AST.Wrap { wrapped; _ } -> expr_effect type_map wrapped
+  | AST.RecordLit (fields, spread) ->
+      let field_effect =
+        List.fold_left
+          (fun acc (f : AST.record_field) ->
+            match f.field_value with
+            | None -> acc
+            | Some v -> combine_effect acc (expr_effect type_map v))
+          Pure fields
+      in
+      combine_effect field_effect
+        (match spread with
+        | None -> Pure
+        | Some e -> expr_effect type_map e)
+  | AST.FieldAccess (e, _) -> expr_effect type_map e
+  | AST.TypeCheck (e, _) -> expr_effect type_map e
+  | AST.EnumConstructor (_, _, args) ->
+      List.fold_left (fun acc arg -> combine_effect acc (expr_effect type_map arg)) Pure args
+  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> Pure
+  | AST.BlockExpr stmts -> List.fold_left (fun acc stmt -> combine_effect acc (body_effect type_map stmt)) Pure stmts
 
 and expr_has_effectful_call (type_map : type_map) (expr : AST.expression) : bool =
-  match expr.expr with
-  | AST.TypeApply (callee, _type_args) -> expr_has_effectful_call type_map callee
-  | AST.Call (func, args) ->
-      let func_is_effectful =
-        match Hashtbl.find_opt type_map func.id with
-        | Some typ -> type_may_be_effectful_callable typ
-        | _ -> false
-      in
-      func_is_effectful
-      || expr_has_effectful_call type_map func
-      || List.exists (expr_has_effectful_call type_map) args
-  | AST.MethodCall { mc_receiver; mc_args; _ } ->
-      lookup_effectful_method_call expr.id
-      || expr_has_effectful_call type_map mc_receiver
-      || List.exists (expr_has_effectful_call type_map) mc_args
-  | AST.If (cond, then_branch, else_branch) -> (
-      expr_has_effectful_call type_map cond
-      || body_has_effectful_call type_map then_branch
-      ||
-      match else_branch with
-      | None -> false
-      | Some b -> body_has_effectful_call type_map b)
-  | AST.Function _ -> false (* defining a function is not calling one *)
-  | AST.Prefix (_, e) -> expr_has_effectful_call type_map e
-  | AST.Infix (l, _, r) -> expr_has_effectful_call type_map l || expr_has_effectful_call type_map r
-  | AST.Array elements -> List.exists (expr_has_effectful_call type_map) elements
-  | AST.Index (arr, idx) -> expr_has_effectful_call type_map arr || expr_has_effectful_call type_map idx
-  | AST.Hash pairs ->
-      List.exists (fun (k, v) -> expr_has_effectful_call type_map k || expr_has_effectful_call type_map v) pairs
-  | AST.Match (scrutinee, arms) ->
-      expr_has_effectful_call type_map scrutinee
-      || List.exists (fun (arm : AST.match_arm) -> expr_has_effectful_call type_map arm.body) arms
-  | AST.Try { tried; fallback; _ } ->
-      expr_has_effectful_call type_map tried
-      || fallback |> Option.map (expr_has_effectful_call type_map) |> Option.value ~default:false
-  | AST.Wrap { wrapped; _ } -> expr_has_effectful_call type_map wrapped
-  | AST.RecordLit (fields, spread) -> (
-      List.exists
-        (fun (f : AST.record_field) ->
-          match f.field_value with
-          | None -> false
-          | Some v -> expr_has_effectful_call type_map v)
-        fields
-      ||
-      match spread with
-      | None -> false
-      | Some e -> expr_has_effectful_call type_map e)
-  | AST.FieldAccess (e, _) -> expr_has_effectful_call type_map e
-  | AST.TypeCheck (e, _) -> expr_has_effectful_call type_map e
-  | AST.EnumConstructor (_, _, args) -> List.exists (expr_has_effectful_call type_map) args
-  | AST.Identifier _ | AST.Integer _ | AST.Float _ | AST.Boolean _ | AST.String _ -> false
-  | AST.BlockExpr stmts -> List.exists (body_has_effectful_call type_map) stmts
+  effect_is_effectful (expr_effect type_map expr)
 
 (* Phase 7: Wrap an expression body in a synthetic statement for type_callable. *)
 and wrap_expr_as_stmt (expr : AST.expression) : AST.statement =
@@ -3810,10 +3903,10 @@ and type_callable
     ~(params : (string * AST.type_expr option) list)
     ~(return_annot : AST.type_expr option)
     ~(known_return : mono_type option)
-    ~(effect_annot : [ `Pure | `Effectful | `Unspecified ])
+    ~(effect_annot : [ `Pure | `Effectful | `EffectPoly | `Unspecified ])
     ~(strict_return_check : bool)
     ~(body : AST.statement) :
-    (string list * mono_type list * mono_type * bool * substitution, Diagnostic.t) result =
+    (string list * mono_type list * mono_type * effect * substitution, Diagnostic.t) result =
   (* 1. Resolve parameter types: annotation > known positional > fresh TVar *)
   let convert_annot te =
     match Annotation.type_expr_to_mono_type_with type_bindings te with
@@ -3871,19 +3964,26 @@ and type_callable
               let body_type' = apply_substitution subst body_type in
               apply_substitution_type_map subst type_map;
               (* 5. Determine effectfulness *)
-              let has_effects = body_has_effectful_call type_map body in
-              if effect_annot = `Pure && has_effects then
+              let inferred_effect = body_effect type_map body in
+              if effect_annot = `Pure && inferred_effect <> Pure then
                 Error
                   (error_at_stmt ~code:"type-purity"
                      ~message:
                        "Pure function (declared with ->) cannot call effectful operations. Use => to declare an effectful function."
                      body)
+              else if effect_annot = `EffectPoly && effect_is_effectful inferred_effect then
+                Error
+                  (error_at_stmt ~code:"type-purity"
+                     ~message:
+                       "Effect-polymorphic function (declared with ~>) cannot perform intrinsic effectful operations. Use => to declare an effectful function."
+                     body)
               else
-                let actual_effectful =
+                let actual_effect =
                   match effect_annot with
-                  | `Effectful -> true
-                  | `Pure -> false
-                  | `Unspecified -> has_effects
+                  | `Effectful -> Effectful
+                  | `EffectPoly -> EffectPoly
+                  | `Pure -> Pure
+                  | `Unspecified -> inferred_effect
                 in
                 (* 6. Return type validation *)
                 match expected_return_opt with
@@ -3892,7 +3992,7 @@ and type_callable
                     match collect_and_unify_returns type_map env' body_type' body subst with
                     | Error e -> Error e
                     | Ok (subst', unified_ret_type) ->
-                        Ok (param_names, param_types, unified_ret_type, actual_effectful, subst'))
+                        Ok (param_names, param_types, unified_ret_type, actual_effect, subst'))
                 | Some expected_ret ->
                     let* () = validate_return_statements type_map env' expected_ret body in
                     let* () = record_explicit_return_trait_object_coercions type_map expected_ret body in
@@ -3920,7 +4020,7 @@ and type_callable
                           | _ -> false
                       in
                       if strict_return_ok then
-                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
+                        Ok (param_names, param_types, expected_ret, actual_effect, subst)
                       else
                         let protected_type_vars =
                           List.fold_left
@@ -3933,7 +4033,7 @@ and type_callable
                             let* () = verify_constraints_in_substitution final_subst in
                             propagate_type_var_constraints_through_substitution final_subst;
                             apply_substitution_type_map subst2 type_map;
-                            Ok (param_names, param_types, expected_ret, actual_effectful, final_subst)
+                            Ok (param_names, param_types, expected_ret, actual_effect, final_subst)
                         | Ok _ | Error _ ->
                             Error
                               (error_at_stmt ~code:"type-return-mismatch"
@@ -3989,9 +4089,9 @@ and type_callable
                             let final_subst = compose_substitution subst subst2 in
                             let final_return_type = expected_ret in
                             apply_substitution_type_map subst2 type_map;
-                            Ok (param_names, param_types, final_return_type, actual_effectful, final_subst))
+                            Ok (param_names, param_types, final_return_type, actual_effect, final_subst))
                       else if subtype_ok then
-                        Ok (param_names, param_types, expected_ret, actual_effectful, subst)
+                        Ok (param_names, param_types, expected_ret, actual_effect, subst)
                       else
                         Error
                           (error_at_stmt ~code:"type-return-mismatch"
@@ -4055,7 +4155,7 @@ and contextual_callable_signature_for_arity (arity : int) (typ : mono_type) : (m
   | _ -> None
 
 and infer_function_with_annotations
-    ?(known_param_types = []) ?known_return type_map env generics_opt params return_annot is_effectful body =
+    ?(known_param_types = []) ?known_return type_map env generics_opt params return_annot effect body =
   (* Process generic parameters and their constraints *)
   let outer_type_bindings = user_named_type_bindings_in_env env in
   let local_type_var_map =
@@ -4074,13 +4174,13 @@ and infer_function_with_annotations
           generics
   in
   let type_var_map = local_type_var_map @ outer_type_bindings in
-  (* Map effect annotation: => is Effectful, -> with return annot is Pure, otherwise Unspecified *)
+  (* Map effect annotation: => is effectful, ~> is effect-polymorphic; omitted arrows are inferred. *)
   let effect_annot =
-    if is_effectful then
-      `Effectful
-    else if Option.is_some return_annot then
-      `Pure
-    else
+    match effect with
+    | AST.Effectful -> `Effectful
+    | AST.EffectPoly -> `EffectPoly
+    | AST.Pure when Option.is_some return_annot -> `Pure
+    | AST.Pure ->
       `Unspecified
   in
   match
@@ -4088,8 +4188,8 @@ and infer_function_with_annotations
       ~effect_annot ~strict_return_check:false ~body
   with
   | Error e -> Error e
-  | Ok (_param_names, param_types, ret_type, actual_effectful, subst) ->
-      let mk_fun a b = TFun (a, b, actual_effectful) in
+  | Ok (_param_names, param_types, ret_type, actual_effect, subst) ->
+      let mk_fun a b = TFun (a, b, actual_effect) in
       let param_types' = List.map (apply_substitution subst) param_types in
       let func_type = List.fold_right mk_fun param_types' ret_type in
       Ok (subst, func_type)
@@ -4269,8 +4369,8 @@ and replace_placeholder_identifier_stmt (param_name : string) (stmt : AST.statem
 
 and placeholder_callback_expectation (typ : mono_type) : placeholder_callback_expectation =
   match canonicalize_mono_type typ with
-  | TFun (_, _, is_effectful) ->
-      if is_effectful then
+  | TFun (_, _, effect) ->
+      if effect_is_effectful effect then
         PlaceholderCallbackEffectfulOnly
       else
         PlaceholderCallbackPureAllowed
@@ -4307,7 +4407,7 @@ and placeholder_lambda_expr (expr : AST.expression) : AST.expression =
          generics = None;
          params = [ (param_name, None) ];
          return_type = None;
-         is_effectful = false;
+         effect = AST.Pure;
          body = body_stmt;
        })
 
@@ -4331,7 +4431,7 @@ and placeholder_unbound_identifier_error (diag : Diagnostic.t) : bool =
 
 and placeholder_callable_is_effectful (typ : mono_type) : bool =
   match canonicalize_mono_type typ with
-  | TFun (_, _, is_effectful) -> is_effectful
+  | TFun (_, _, effect) -> effect_is_effectful effect
   | TUnion members -> List.exists placeholder_callable_is_effectful members
   | _ -> false
 
@@ -4344,15 +4444,15 @@ and infer_function_literal
     ~(generics : AST.generic_param list option)
     ~(params : (string * AST.type_expr option) list)
     ~(return_type : AST.type_expr option)
-    ~(is_effectful : bool)
+    ~(effect : AST.effect_annotation)
     ~(body : AST.statement) : (substitution * mono_type) infer_result =
   let infer_literal () =
     match known_signature with
     | Some (param_types, known_return_type) ->
         let known_param_types = List.mapi (fun i ty -> (i, ty)) param_types in
         infer_function_with_annotations ~known_param_types ~known_return:known_return_type type_map env generics
-          params return_type is_effectful body
-    | None -> infer_function_with_annotations type_map env generics params return_type is_effectful body
+          params return_type effect body
+    | None -> infer_function_with_annotations type_map env generics params return_type effect body
   in
   let infer_result =
     match origin with
@@ -4387,9 +4487,9 @@ and infer_placeholder_section_expr (type_map : type_map) (env : type_env) (expr 
     (substitution * mono_type) infer_result =
   let rewritten_expr = placeholder_lambda_expr expr in
   match rewritten_expr.expr with
-  | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
+  | AST.Function { origin; generics; params; return_type; effect; body } -> (
       match
-        infer_function_literal type_map env rewritten_expr ~origin ~generics ~params ~return_type ~is_effectful
+        infer_function_literal type_map env rewritten_expr ~origin ~generics ~params ~return_type ~effect
           ~body
       with
       | Error _ as err -> err
@@ -4693,13 +4793,13 @@ and infer_named_type_constructor_call_against_expected
 and infer_expression_against_expected type_map env (expr : AST.expression) expected_type =
   let result =
     match expr.expr with
-    | AST.Function { origin; generics; params; return_type; is_effectful; body } -> (
+    | AST.Function { origin; generics; params; return_type; effect; body } -> (
         match contextual_callable_signature_for_arity (List.length params) expected_type with
         | Some signature ->
             infer_function_literal ~known_signature:signature type_map env expr ~origin ~generics ~params
-              ~return_type ~is_effectful ~body
+              ~return_type ~effect ~body
         | None ->
-            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~is_effectful ~body)
+            infer_function_literal type_map env expr ~origin ~generics ~params ~return_type ~effect ~body)
     | AST.If (condition, consequence, alternative) ->
         infer_if_against_expected type_map env condition consequence alternative expected_type
     | AST.Match (scrutinee, arms) -> infer_match_against_expected type_map env expr scrutinee arms expected_type
@@ -4874,6 +4974,7 @@ and infer_exported_extern_call
     | Ok (subst, _arg_types) ->
         record_call_resolution call_expr (ShimQualifiedCall func.shim_key);
         record_effectful_method_call call_expr func.is_effectful;
+        record_call_effect call_expr (effect_of_bool func.is_effectful);
         Extern_registry.record_call call_expr.id
           {
             Resolution_artifacts.call_func_key = func.shim_key;
@@ -4916,13 +5017,13 @@ and infer_regular_call type_map env (call_expr : AST.expression) func args =
          (pure | effectful) so higher-order callbacks remain flexible.
          Fall back to a directional pure-then-effectful probe. *)
           let fresh_result_type () = fresh_type_var () in
-          let expected_func_type_for is_effectful result_type =
-            List.fold_right (fun arg_t acc -> TFun (arg_t, acc, is_effectful)) expected_param_types result_type
+          let expected_func_type_for effect result_type =
+            List.fold_right (fun arg_t acc -> TFun (arg_t, acc, effect)) expected_param_types result_type
           in
           let try_effect_polymorphic_callable () =
             let result_type = fresh_result_type () in
-            let expected_pure = expected_func_type_for false result_type in
-            let expected_effectful = expected_func_type_for true result_type in
+            let expected_pure = expected_func_type_for Pure result_type in
+            let expected_effectful = expected_func_type_for Effectful result_type in
             let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
             match unify func_type' expected_union with
             | Ok subst2 -> Ok (subst2, result_type)
@@ -4930,12 +5031,12 @@ and infer_regular_call type_map env (call_expr : AST.expression) func args =
           in
           let try_directional_purity_probe () =
             let result_type_pure = fresh_result_type () in
-            let expected_pure = expected_func_type_for false result_type_pure in
+            let expected_pure = expected_func_type_for Pure result_type_pure in
             match unify func_type' expected_pure with
             | Ok subst2 -> Ok (subst2, result_type_pure)
             | Error pure_err -> (
                 let result_type_eff = fresh_result_type () in
-                let expected_eff = expected_func_type_for true result_type_eff in
+                let expected_eff = expected_func_type_for Effectful result_type_eff in
                 match unify func_type' expected_eff with
                 | Ok subst2 -> Ok (subst2, result_type_eff)
                 | Error _ -> Error pure_err)
@@ -4948,8 +5049,8 @@ and infer_regular_call type_map env (call_expr : AST.expression) func args =
                 | Error _ -> try_directional_purity_probe ())
             | TUnion members -> (
                 let result_type = fresh_result_type () in
-                let expected_pure = expected_func_type_for false result_type in
-                let expected_effectful = expected_func_type_for true result_type in
+                let expected_pure = expected_func_type_for Pure result_type in
+                let expected_effectful = expected_func_type_for Effectful result_type in
                 let expected_union = Types.normalize_union [ expected_pure; expected_effectful ] in
                 match Unify.unify_union_all_with_concrete members expected_union with
                 | Ok subst2 -> Ok (subst2, result_type)
@@ -4962,13 +5063,23 @@ and infer_regular_call type_map env (call_expr : AST.expression) func args =
               let subst' = compose_substitution subst1 subst2 in
               match infer_args_against_expected type_map env subst' args expected_param_types with
               | Error e -> Error e
-              | Ok (final_subst, _arg_types) -> (
+              | Ok (final_subst, arg_types) -> (
                   (* Phase 4.3+: Verify trait constraints are satisfied.
                  When calling a constrained generic function like fn[a: show](x: a),
                  we need to check that the actual argument type implements the required traits. *)
                   match verify_constraints_in_substitution final_subst with
                   | Error diag -> Error (error_at ~code:diag.code ~message:diag.message call_expr)
                   | Ok () ->
+                      let resolved_func_type = apply_substitution final_subst func_type' in
+                      let resolved_param_types =
+                        List.map (apply_substitution final_subst) expected_param_types
+                      in
+                      let resolved_arg_types = List.map (apply_substitution final_subst) arg_types in
+                      let call_effect =
+                        resolve_effect_polymorphic_call (type_callable_effect resolved_func_type)
+                          resolved_param_types resolved_arg_types
+                      in
+                      record_call_effect call_expr call_effect;
                       let final_result = apply_substitution final_subst result_type in
                       Ok (final_subst, final_result)))))
 
@@ -5577,10 +5688,11 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                         Ok (THash (kt, vt))
                     | _ -> trait_err "map expects 2 arguments")
                 | _ -> Annotation.type_expr_to_mono_type (AST.TApp (con_name, args)))
-          | AST.TArrow (params, ret, is_effectful) ->
+          | AST.TArrow (params, ret, ast_effect) ->
               let* param_types = map_result convert params in
               let* ret_type = convert ret in
-              let mk_fun arg ret = TFun (arg, ret, is_effectful) in
+              let effect = effect_of_ast ast_effect in
+              let mk_fun arg ret = TFun (arg, ret, effect) in
               Ok (List.fold_right mk_fun param_types ret_type)
           | AST.TTraitObject traits -> Ok (canonicalize_mono_type (TTraitObject traits))
           | AST.TUnion types ->
@@ -5613,7 +5725,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
             * (string * mono_type) list
             * mono_type
             * (string * Constraints.t list) list
-            * [ `Pure | `Effectful ],
+            * [ `Pure | `Effectful | `EffectPoly ],
             Diagnostic.t )
           result =
         (* Build method-level type variable names for recognition during conversion *)
@@ -5648,6 +5760,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
           match m.method_effect with
           | AST.Pure -> `Pure
           | AST.Effectful -> `Effectful
+          | AST.EffectPoly -> `EffectPoly
         in
         Ok (method_generic_names, param_types, return_type, method_generics, method_effect)
       in
@@ -5722,18 +5835,19 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                       ~effect_annot:
                         (match m.method_effect with
                         | AST.Pure -> `Pure
-                        | AST.Effectful -> `Effectful)
+                        | AST.Effectful -> `Effectful
+                        | AST.EffectPoly -> `EffectPoly)
                       ~strict_return_check:true ~body:body_stmt)
               in
               match infer_default_body with
               | Error e -> Error e
-              | Ok (param_names, inferred_param_types, inferred_return_type, is_effectful, subst) ->
+              | Ok (param_names, inferred_param_types, inferred_return_type, inferred_effect, subst) ->
                   record_method_def m.method_sig_id
                     {
                       Resolution_artifacts.md_param_names = param_names;
                       md_param_types = inferred_param_types;
                       md_return_type = inferred_return_type;
-                      md_is_effectful = is_effectful;
+                      md_is_effectful = effect_is_effectful inferred_effect;
                       md_body_id = m.method_sig_id;
                     };
                   Ok
@@ -5908,6 +6022,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                   let effect_annot =
                     match m.impl_method_effect with
                     | Some AST.Effectful -> `Effectful
+                    | Some AST.EffectPoly -> `EffectPoly
                     | Some AST.Pure -> `Pure
                     | None -> `Unspecified
                   in
@@ -5945,17 +6060,17 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                   in
                   match body_result with
                   | Error e -> Error e
-                  | Ok (param_names, param_types, return_type, is_effectful, subst) ->
+                  | Ok (param_names, param_types, return_type, inferred_effect, subst) ->
                       let method_generics =
                         List.map
                           (fun (gp : AST.generic_param) -> (gp.name, Constraints.of_names gp.constraints))
                           effective_method_generics
                       in
                       let method_effect =
-                        if is_effectful then
-                          `Effectful
-                        else
-                          `Pure
+                        match inferred_effect with
+                        | Effectful -> `Effectful
+                        | EffectPoly -> `EffectPoly
+                        | Pure -> `Pure
                       in
                       let method_generic_internal_vars =
                         List.filter_map
@@ -5970,7 +6085,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                           Resolution_artifacts.md_param_names = param_names;
                           md_param_types = param_types;
                           md_return_type = return_type;
-                          md_is_effectful = is_effectful;
+                          md_is_effectful = effect_is_effectful inferred_effect;
                           md_body_id = m.impl_method_id;
                         };
                       Ok
@@ -6192,6 +6307,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                   let effect_annot =
                     match m.impl_method_effect with
                     | Some AST.Effectful -> `Effectful
+                    | Some AST.EffectPoly -> `EffectPoly
                     | Some AST.Pure -> `Pure
                     | None -> `Unspecified
                   in
@@ -6232,7 +6348,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                   in
                   match body_result with
                   | Error e -> Error e
-                  | Ok (param_names, param_types, return_type, is_effectful, subst) ->
+                  | Ok (param_names, param_types, return_type, inferred_effect, subst) ->
                       let method_generics =
                         match m.impl_method_generics with
                         | None -> []
@@ -6242,10 +6358,10 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                               gps
                       in
                       let method_effect =
-                        if is_effectful then
-                          `Effectful
-                        else
-                          `Pure
+                        match inferred_effect with
+                        | Effectful -> `Effectful
+                        | EffectPoly -> `EffectPoly
+                        | Pure -> `Pure
                       in
                       (* Track which internal TVars correspond to method-level generics.
                      Body inference may map e.g. b -> t0; the emitter needs this
@@ -6263,7 +6379,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                           Resolution_artifacts.md_param_names = param_names;
                           md_param_types = param_types;
                           md_return_type = return_type;
-                          md_is_effectful = is_effectful;
+                          md_is_effectful = effect_is_effectful inferred_effect;
                           md_body_id = m.impl_method_id;
                         };
                       Ok
@@ -6422,7 +6538,7 @@ and infer_statement ?(type_bindings = []) type_map env stmt =
                                 md_is_effectful =
                                   (match method_sig.method_effect with
                                   | `Effectful -> true
-                                  | `Pure -> false);
+                                  | `EffectPoly | `Pure -> false);
                                 md_body_id = m.impl_method_id;
                               };
                             let receiver_type =
@@ -6969,7 +7085,7 @@ and infer_let ?(prefer_existing_self = false) ?(type_bindings = []) type_map env
         match (expr.expr, callable_context, type_annotation) with
         | AST.Function _, Some (annotated_type, _), _ -> Ok annotated_type
         | AST.Function f, None, _ ->
-            provisional_function_type ~outer_type_bindings f.generics f.params f.return_type f.is_effectful
+            provisional_function_type ~outer_type_bindings f.generics f.params f.return_type f.effect
         | _, _, Some type_expr -> Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr
         | _, _, None -> Ok (fresh_type_var ())
       in
@@ -6994,13 +7110,13 @@ and infer_let ?(prefer_existing_self = false) ?(type_bindings = []) type_map env
           (* Infer expression type with self in scope *)
           let infer_expr_result =
             match (expr.expr, callable_context, type_annotation) with
-            | AST.Function { origin; generics; params; return_type; is_effectful; body }, Some (_, signature), _
+            | AST.Function { origin; generics; params; return_type; effect; body }, Some (_, signature), _
               ->
                 infer_function_literal ~known_signature:signature type_map env_with_self expr ~origin ~generics
-                  ~params ~return_type ~is_effectful ~body
-            | AST.Function { origin; generics; params; return_type; is_effectful; body }, None, _ ->
+                  ~params ~return_type ~effect ~body
+            | AST.Function { origin; generics; params; return_type; effect; body }, None, _ ->
                 infer_function_literal type_map env_with_self expr ~origin ~generics ~params ~return_type
-                  ~is_effectful ~body
+                  ~effect ~body
             | _, _, Some type_expr -> (
                 match Annotation.type_expr_to_mono_type_with outer_type_bindings type_expr with
                 | Error d -> Error d
@@ -7179,7 +7295,7 @@ let predeclare_top_level_lets (env : type_env) (program : AST.program) : (type_e
                     | AST.Function f ->
                         Some
                           (provisional_function_type ~outer_type_bindings f.generics f.params f.return_type
-                             f.is_effectful)
+                             f.effect)
                     | _ -> Some (provisional_placeholder_section_type ~outer_type_bindings ())
                   else
                     None
@@ -8036,7 +8152,7 @@ module Test = struct
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
-        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, true))) empty_env in
+        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, Effectful))) empty_env in
         match infer_program ~state ~env program with
         | Error _ -> false
         | Ok _ -> (
@@ -8056,7 +8172,7 @@ module Test = struct
     | Error _ -> false
     | Ok program -> (
         let state = create_inference_state () in
-        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, true))) empty_env in
+        let env = TypeEnv.add "puts" (mono_to_poly (TFun (TInt, TInt, Effectful))) empty_env in
         match infer_program ~state ~env program with
         | Error _ -> false
         | Ok _ -> (
@@ -8869,20 +8985,20 @@ f"
     (* fn add1(x: Int) => Int = x + 1 should infer as Int => Int *)
     match infer_string "fn add1(x: Int) => Int = x + 1\nadd1" with
     | Error _ -> false
-    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Effectful)) -> true
     | Ok _ -> false
 
   let%test "infer pure function type uses thin arrow" =
     (* fn add1(x: Int) -> Int = x + 1 should infer as Int -> Int (not effectful) *)
     match infer_string "fn add1(x: Int) -> Int = x + 1\nadd1" with
     | Error _ -> false
-    | Ok (_, _, TFun (TInt, TInt, false)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Pure)) -> true
     | Ok _ -> false
 
   let%test "infer unannotated function is pure by default" =
     match infer_string "fn add1(x) = x + 1\nadd1" with
     | Error _ -> false
-    | Ok (_, _, TFun (_, _, false)) -> true
+    | Ok (_, _, TFun (_, _, Pure)) -> true
     | Ok _ -> false
 
   (* Purity enforcement tests *)
@@ -8898,24 +9014,24 @@ f"
 
   let%test "pure function with pure body is ok" =
     match infer_string "fn add1(x: Int) -> Int = x + 1\nadd1" with
-    | Ok (_, _, TFun (TInt, TInt, false)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Pure)) -> true
     | _ -> false
 
   let%test "effectful annotation with pure body is ok (no enforcement yet)" =
     (* Case 2 is not enforced — => with pure body is allowed *)
     match infer_string "fn add1(x: Int) => Int = x + 1\nadd1" with
-    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Effectful)) -> true
     | _ -> false
 
   let%test "unannotated function calling effectful infers as effectful" =
     let code = "fn eff(x: Int) => Int = x\nfn caller(y: Int) = eff(y)\ncaller" in
     match infer_string code with
-    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Effectful)) -> true
     | _ -> false
 
   let%test "unannotated function with pure body infers as pure" =
     match infer_string "fn add1(x) = x + 1\nadd1" with
-    | Ok (_, _, TFun (_, _, false)) -> true
+    | Ok (_, _, TFun (_, _, Pure)) -> true
     | _ -> false
 
   let%test "pure function calling effectful in let binding is error" =
@@ -8951,7 +9067,7 @@ f"
       "fn choose(flag: Bool) = if (flag) { (x: Int) -> x + 1 } else { (x: Int) => x }\nfn caller(flag: Bool) = choose(flag)(1)\ncaller"
     in
     match infer_string code with
-    | Ok (_, _, TFun (TBool, TInt, true)) -> true
+    | Ok (_, _, TFun (TBool, TInt, Effectful)) -> true
     | _ -> false
 
   let%test "unannotated higher-order caller accepts pure and effectful callbacks" =
@@ -9000,7 +9116,7 @@ f"
       "fn eff(x: Int) => Int = x\nfn loop(n: Int) = { if (n == 0) { 0 } else { eff(n); loop(n - 1) } }\nloop"
     in
     match infer_string code with
-    | Ok (_, _, TFun (TInt, TInt, true)) -> true
+    | Ok (_, _, TFun (TInt, TInt, Effectful)) -> true
     | _ -> false
 
   let%test "pure annotated recursive function with effectful call is rejected" =

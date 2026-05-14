@@ -28,6 +28,7 @@ and token_type =
   | NotEq
   | Arrow (* -> for return type annotations *)
   | FatArrow (* => for effect markers *)
+  | TildeArrow (* ~> for effect-polymorphic markers *)
   | Pipe (* | for union types *)
   | PipeForward (* |> for forward pipe *)
   | Ampersand (* & for trait constraints *)

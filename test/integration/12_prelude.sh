@@ -70,6 +70,11 @@ run_project_expect_output \
     $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nmatch Result.wrap(ok_num, (e: Str) -> e + "!") {\n  case Result.Success(v): puts("ok:" + Show.show(v))\n  case Result.Failure(_): puts("bad")\n}\nmatch Result.wrap(failed, (e: Str) -> e + "!") {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts("fail:" + msg)\n}\n'
 
 run_project_expect_output \
+    "Result.bind is effect-polymorphic over its callback" \
+    $'43\n10\n12' \
+    $'fn pure_step(r: Result[Int, Str]) -> Result[Int, Str] =\n  Result.bind(r, (x: Int) -> Result.Success(x + 1))\n\nfn effect_step(r: Result[Int, Str]) => Result[Int, Str] =\n  Result.bind(r, (x: Int) => {\n    puts(x)\n    Result.Success(x + 2)\n  })\n\nlet pure_result = pure_step(Result.Success(42))\nmatch pure_result {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\n\nlet effect_result = effect_step(Result.Success(10))\nmatch effect_result {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\n'
+
+run_project_expect_output \
     "std.error exposes canonical messages and hidden construction frames" \
     $'File not found\ntrue\nmatched' \
     $'import std.error\n\ntype FileError = { NotFound(Str) = "File not found" }\n\nlet err = FileError.NotFound("missing")\nlet _ = error.context(err)\nputs(error.message(err))\nputs(Show.show(len(error.frames(err)) > 0))\nmatch err {\n  case FileError.NotFound(_): puts("matched")\n}\n'

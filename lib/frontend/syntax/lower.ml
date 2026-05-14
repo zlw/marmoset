@@ -169,11 +169,11 @@ let rec lower_type_expr_with_bound_vars (bound_type_vars : StringSet.t) (st : Su
   | Surface.STTraitObject traits -> AST.TTraitObject (List.map name_text traits)
   | Surface.STApp (name, args) ->
       AST.TApp (name_text name, List.map (lower_type_expr_with_bound_vars bound_type_vars) args)
-  | Surface.STArrow (params, ret, effectful) ->
+  | Surface.STArrow (params, ret, effect) ->
       AST.TArrow
         ( List.map (lower_type_expr_with_bound_vars bound_type_vars) params,
           lower_type_expr_with_bound_vars bound_type_vars ret,
-          effectful )
+          effect )
   | Surface.STUnion members -> AST.TUnion (List.map (lower_type_expr_with_bound_vars bound_type_vars) members)
   | Surface.STIntersection members ->
       AST.TIntersection (List.map (lower_type_expr_with_bound_vars bound_type_vars) members)
@@ -546,7 +546,7 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
             mc_type_args = Option.map (List.map lower_type_expr) se_type_args;
             mc_args = List.map (lower_expr_with_ctx ctx id_supply) se_args;
           }
-    | Surface.SEArrowLambda { se_lambda_params; se_lambda_is_effectful; se_lambda_body } ->
+    | Surface.SEArrowLambda { se_lambda_params; se_lambda_effect; se_lambda_body } ->
         (* Lower arrow lambda to canonical Function form *)
         let generics, params = lower_callable_signature ctx None se_lambda_params in
         let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply se_lambda_body in
@@ -556,7 +556,7 @@ let rec lower_expr_with_ctx (ctx : lower_context) (id_supply : Id_supply.Id_supp
             generics;
             params;
             return_type = None;
-            is_effectful = se_lambda_is_effectful;
+            effect = se_lambda_effect;
             body = fn_body;
           }
     | Surface.SEPlaceholder -> failwith_unimplemented "SEPlaceholder"
@@ -821,7 +821,7 @@ let lower_top_decl_with_ctx
                type_annotation = Option.map lower_type_expr type_annotation;
              });
       ]
-  | Surface.SFnDecl { name; generics; params; return_type; is_effectful; body; _ } ->
+  | Surface.SFnDecl { name; generics; params; return_type; effect; body; _ } ->
       let generics, params = lower_callable_signature ctx generics params in
       let bound_type_vars = bound_type_vars_of_generics generics in
       let fn_body = lower_expr_or_block_to_stmt_with_ctx ctx id_supply body in
@@ -833,7 +833,7 @@ let lower_top_decl_with_ctx
                generics;
                params;
                return_type = Option.map (lower_type_expr_with_bound_vars bound_type_vars) return_type;
-               is_effectful;
+               effect;
                body = fn_body;
              })
       in
@@ -1020,7 +1020,7 @@ let test_constraint_shorthand names =
   Surface.mk_surface_type (Surface.STConstraintShorthand (List.map test_name_ref names))
 
 let test_trait_object names = Surface.mk_surface_type (Surface.STTraitObject (List.map test_name_ref names))
-let test_starrow params ret effectful = Surface.mk_surface_type (Surface.STArrow (params, ret, effectful))
+let test_starrow params ret effect = Surface.mk_surface_type (Surface.STArrow (params, ret, effect))
 let test_stintersection members = Surface.mk_surface_type (Surface.STIntersection members)
 let test_strecord fields row = Surface.mk_surface_type (Surface.STRecord (fields, row))
 let test_record_type_field name sf_type = Surface.{ sf_name = name; sf_name_ref = test_name_ref name; sf_type }
@@ -1034,8 +1034,8 @@ let test_typed_param name stp_type = Surface.{ stp_name = name; stp_name_ref = t
 let test_slet name value type_annotation =
   Surface.SLet { name; name_ref = test_name_ref name; value; type_annotation }
 
-let test_sfndecl ?generics ?return_type ~name ~params ~is_effectful ~body () =
-  Surface.SFnDecl { name; name_ref = test_name_ref name; generics; params; return_type; is_effectful; body }
+let test_sfndecl ?generics ?return_type ~name ~params ~effect ~body () =
+  Surface.SFnDecl { name; name_ref = test_name_ref name; generics; params; return_type; effect; body }
 
 let test_stypedef ?(type_type_params = []) ~type_name ~type_body ~derive () =
   Surface.STypeDef
@@ -1132,7 +1132,8 @@ let%test "transparent type params lower lowercase names to TVars in type bodies"
   let id_supply = Id_supply.Id_supply.create 0 in
   let decl =
     test_stypedef ~type_name:"Reducer" ~type_type_params:[ "a" ]
-      ~type_body:(Surface.STTransparent (test_starrow [ test_stcon "a"; test_stcon "a" ] (test_stcon "a") false))
+      ~type_body:
+        (Surface.STTransparent (test_starrow [ test_stcon "a"; test_stcon "a" ] (test_stcon "a") AST.Pure))
       ~derive:[] ()
   in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
@@ -1144,7 +1145,7 @@ let%test "transparent type params lower lowercase names to TVars in type bodies"
          {
            alias_name = "Reducer";
            alias_type_params = [ "a" ];
-           alias_body = AST.TArrow ([ AST.TVar "a"; AST.TVar "a" ], AST.TVar "a", false);
+           alias_body = AST.TArrow ([ AST.TVar "a"; AST.TVar "a" ], AST.TVar "a", AST.Pure);
          };
      _;
    };
@@ -1233,12 +1234,12 @@ let%test "lower SEArrowLambda to canonical Function" =
       (Surface.SEArrowLambda
          {
            se_lambda_params = [ test_value_param "x" ];
-           se_lambda_is_effectful = false;
+           se_lambda_effect = AST.Pure;
            se_lambda_body = Surface.SEOBExpr body_expr;
          })
   in
   match (lower_expr id_supply lambda).expr with
-  | AST.Function { params = [ ("x", None) ]; is_effectful = false; body = { stmt = AST.Block [ _ ]; _ }; _ } ->
+  | AST.Function { params = [ ("x", None) ]; effect = AST.Pure; body = { stmt = AST.Block [ _ ]; _ }; _ } ->
       true
   | _ -> false
 
@@ -1251,7 +1252,7 @@ let%test "arrow lambda shorthand param lowers with program trait context" =
       (Surface.SEArrowLambda
          {
            se_lambda_params = [ test_value_param ~typ:(test_stcon "Named") "x" ];
-           se_lambda_is_effectful = false;
+           se_lambda_effect = AST.Pure;
            se_lambda_body = Surface.SEOBExpr body_expr;
          })
   in
@@ -1513,7 +1514,7 @@ let%test "lower_method_impl carries override flag" =
 let%test "SFnDecl with expr body -> Block[ExpressionStmt]" =
   let id_supply = Id_supply.Id_supply.create 0 in
   let body_expr = Surface.mk_surface_expr ~id:1 ~pos:5 (Surface.SEInteger 99L) in
-  let decl = test_sfndecl ~name:"answer" ~params:[] ~is_effectful:false ~body:(Surface.SEOBExpr body_expr) () in
+  let decl = test_sfndecl ~name:"answer" ~params:[] ~effect:AST.Pure ~body:(Surface.SEOBExpr body_expr) () in
   let result = lower_top_decl id_supply (mk_test_ts decl) in
   match result with
   | [
@@ -1547,7 +1548,7 @@ let%test "bare trait param shorthand lowers to fresh constrained generic" =
   let decl =
     test_sfndecl ~name:"who_dis"
       ~params:[ test_value_param ~typ:(test_stcon "JungleDweller") "x" ]
-      ~return_type:(test_stcon "Str") ~is_effectful:false ~body:(Surface.SEOBExpr body_expr) ()
+      ~return_type:(test_stcon "Str") ~effect:AST.Pure ~body:(Surface.SEOBExpr body_expr) ()
   in
   let prog =
     lower_program id_supply
@@ -1590,7 +1591,7 @@ let%test "multiple shorthand params lower to independent generics" =
   let decl =
     test_sfndecl ~name:"same_species"
       ~params:[ test_value_param ~typ:(test_stcon "Eq") "x"; test_value_param ~typ:(test_stcon "Eq") "y" ]
-      ~return_type:(test_stcon "Bool") ~is_effectful:false ~body:(Surface.SEOBExpr body_expr) ()
+      ~return_type:(test_stcon "Bool") ~effect:AST.Pure ~body:(Surface.SEOBExpr body_expr) ()
   in
   let prog = lower_program id_supply [ mk_test_ts decl ] in
   match prog with
@@ -1629,7 +1630,7 @@ let%test "ampersand shorthand param lowers to one constrained generic with multi
   let decl =
     test_sfndecl ~name:"describe"
       ~params:[ test_value_param ~typ:(test_constraint_shorthand [ "Named"; "Aged" ]) "x" ]
-      ~return_type:(test_stcon "Str") ~is_effectful:false ~body:(Surface.SEOBExpr body_expr) ()
+      ~return_type:(test_stcon "Str") ~effect:AST.Pure ~body:(Surface.SEOBExpr body_expr) ()
   in
   let prog = lower_program id_supply [ mk_test_ts decl ] in
   match prog with
@@ -1665,7 +1666,7 @@ let%test "explicit generics and shorthand params stay independent" =
       ~generics:[ test_generic ~constraints:[ "Named" ] "a" ]
       ~params:
         [ test_value_param ~typ:(test_stcon "a") "left"; test_value_param ~typ:(test_stcon "Named") "right" ]
-      ~return_type:(test_stcon "Str") ~is_effectful:false ~body:(Surface.SEOBExpr body_expr) ()
+      ~return_type:(test_stcon "Str") ~effect:AST.Pure ~body:(Surface.SEOBExpr body_expr) ()
   in
   let prog =
     lower_program id_supply

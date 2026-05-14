@@ -1,0 +1,10 @@
+# P28: Effect-polymorphic calls still reject effectful callback paths in pure functions
+fn apply_poly(f: (Int) ~> Int, x: Int) ~> Int = f(x)
+
+fn bad(x: Int) -> Int =
+  apply_poly((n: Int) => {  # error: Pure function
+    puts(n)
+    n
+  }, x)
+
+bad(1)

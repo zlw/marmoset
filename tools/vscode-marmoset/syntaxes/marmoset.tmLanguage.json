@@ -148,7 +148,7 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.marmoset",
-          "match": "->|=>"
+          "match": "->|=>|~>"
         },
         {
           "name": "keyword.operator.pipe.marmoset",
@@ -265,12 +265,12 @@
     },
 
     "function-type": {
-      "comment": "Function types: (Int, Str) -> Bool or (Int, Str) => Bool",
+      "comment": "Function types: (Int, Str) -> Bool, (Int, Str) => Bool, or (Int, Str) ~> Bool",
       "begin": "(?<![A-Za-z_])\\(",
       "beginCaptures": {
         "0": { "name": "punctuation.bracket.round.begin.marmoset" }
       },
-      "end": "(?<=\\))\\s*(->|=>)\\s*",
+      "end": "(?<=\\))\\s*(->|=>|~>)\\s*",
       "endCaptures": {
         "1": { "name": "keyword.operator.arrow.marmoset" }
       },
@@ -290,7 +290,7 @@
 
     "intersection-type": {
       "comment": "Intersection types: Named & Aged, List[Int] & Named",
-      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
+      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>|~>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>|~>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
       "captures": {
         "1": { "name": "entity.name.type.marmoset" },
         "2": { "name": "keyword.operator.constraint.marmoset" },
@@ -497,7 +497,7 @@
         },
         {
           "comment": "Return type arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#type-annotation" },
@@ -599,7 +599,7 @@
         { "include": "#parameter-list-inner" },
         {
           "comment": "Return type arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#type-annotation" },
@@ -676,7 +676,7 @@
         { "include": "#parameter-list-inner" },
         {
           "comment": "Return type after )",
-          "match": "(\\))\\s*(->|=>)",
+          "match": "(\\))\\s*(->|=>|~>)",
           "captures": {
             "1": { "name": "punctuation.bracket.round.end.marmoset" },
             "2": { "name": "keyword.operator.arrow.marmoset" }
@@ -936,8 +936,8 @@
     },
 
     "lambda-expression": {
-      "comment": "(x: Int) -> x + 1 or (x: Int) => { x + 1 }",
-      "begin": "(?=\\([^\\n]*\\)\\s*(?:->|=>))",
+      "comment": "(x: Int) -> x + 1, (x: Int) => { x + 1 }, or (x: Int) ~> x + 1",
+      "begin": "(?=\\([^\\n]*\\)\\s*(?:->|=>|~>))",
       "end": "(?<=\\})|$",
       "patterns": [
         {
@@ -956,7 +956,7 @@
         },
         {
           "comment": "Lambda arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#block" },

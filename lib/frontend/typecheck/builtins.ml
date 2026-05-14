@@ -525,11 +525,11 @@ let%test "builtin traits are registered" =
 
 let%test "puts is effectful, other builtins are pure" =
   let is_effectful = function
-    | Types.TFun (_, _, true) -> true
+    | Types.TFun (_, _, Types.Effectful) -> true
     | _ -> false
   in
   let is_pure = function
-    | Types.TFun (_, _, false) -> true
+    | Types.TFun (_, _, Types.Pure) -> true
     | _ -> false
   in
   let puts_type = List.assoc "puts" builtin_types in

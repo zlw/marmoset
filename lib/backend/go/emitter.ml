@@ -106,11 +106,11 @@ let rec mangle_type (t : Types.mono_type) : string =
         (Printf.sprintf
            "Codegen error: unresolved type variable '%s' reached mangle_type. All type variables must be resolved before code generation."
            name)
-  | Types.TFun (arg, ret, is_effectful) ->
-      (if is_effectful then
-         "efffn_"
-       else
-         "fn_")
+  | Types.TFun (arg, ret, effect) ->
+      (match effect with
+      | Types.Pure -> "fn_"
+      | Types.Effectful -> "efffn_"
+      | Types.EffectPoly -> "polyfn_")
       ^ mangle_type arg
       ^ "_"
       ^ mangle_type ret
@@ -147,11 +147,11 @@ let rec mangle_type_for_shape (t : Types.mono_type) : string =
   | Types.TString -> "string"
   | Types.TNull -> "unit"
   | Types.TVar _ | Types.TRowVar _ -> "any"
-  | Types.TFun (arg, ret, is_effectful) ->
-      (if is_effectful then
-         "efffn_"
-       else
-         "fn_")
+  | Types.TFun (arg, ret, effect) ->
+      (match effect with
+      | Types.Pure -> "fn_"
+      | Types.Effectful -> "efffn_"
+      | Types.EffectPoly -> "polyfn_")
       ^ mangle_type_for_shape arg
       ^ "_"
       ^ mangle_type_for_shape ret
@@ -1280,7 +1280,7 @@ and emit_func_type state arg ret =
         (a :: args, final_ret)
     | t -> ([], t)
   in
-  let args, final_ret = collect_args (Types.TFun (arg, ret, false)) in
+  let args, final_ret = collect_args (Types.TFun (arg, ret, Types.Pure)) in
   let args_str = List.map (type_to_go state) args |> String.concat ", " in
   Printf.sprintf "func(%s) %s" args_str (type_to_go state final_ret)
 
@@ -2776,7 +2776,7 @@ let trait_impl_type_from_resolved_method_type
       | primary_trait_param :: _ ->
           let method_type =
             List.fold_right
-              (fun (_param_name, param_type) acc -> Types.TFun (param_type, acc, false))
+              (fun (_param_name, param_type) acc -> Types.TFun (param_type, acc, Types.Pure))
               method_sig.method_params method_sig.method_return_type
           in
           match Unify.unify method_type resolved_method_type with
@@ -2797,7 +2797,7 @@ let qualified_trait_impl_type_from_direct_call
   let resolved_return_type, _subst = refined_expr_type_for_expected type_map expr expected_type in
   let arg_types = List.map (method_dispatch_type env type_map) args in
   let resolved_method_type =
-    List.fold_right (fun arg_type acc -> Types.TFun (arg_type, acc, false)) arg_types resolved_return_type
+    List.fold_right (fun arg_type acc -> Types.TFun (arg_type, acc, Types.Pure)) arg_types resolved_return_type
   in
   trait_impl_type_from_resolved_method_type trait_name method_name resolved_method_type
 
@@ -2919,7 +2919,8 @@ let refine_callable_param_types_from_user_args
       Types.mono_type =
     let mk_fun =
       match target_func_type with
-      | Types.TFun (_, _, true) -> Types.tfun_eff
+      | Types.TFun (_, _, Types.Effectful) -> Types.tfun_eff
+      | Types.TFun (_, _, Types.EffectPoly) -> Types.tfun_poly
       | _ -> Types.tfun
     in
     List.fold_right (fun param acc -> mk_fun param acc) params return_type
@@ -5211,11 +5212,11 @@ and emit_field_function_call
       let callable_type, expected_param_types =
         match callable_signature_exact (List.length args) callable_type with
         | Some (params, ret) ->
-            (List.fold_right (fun param acc -> Types.TFun (param, acc, false)) params ret, params)
+            (List.fold_right (fun param acc -> Types.TFun (param, acc, Types.Pure)) params ret, params)
         | None ->
             let arg_types = List.map (expr_type_from_env_or_map env type_map) args in
             let result_type = get_type type_map call_expr in
-            (List.fold_right (fun param acc -> Types.TFun (param, acc, false)) arg_types result_type, arg_types)
+            (List.fold_right (fun param acc -> Types.TFun (param, acc, Types.Pure)) arg_types result_type, arg_types)
       in
       let callable_go_type = type_to_go state.mono callable_type in
       let args_str = emit_args_with_expected_types expected_param_types in
@@ -5224,7 +5225,7 @@ and emit_field_function_call
       let arg_types = List.map (expr_type_from_env_or_map env type_map) args in
       let result_type = get_type type_map call_expr in
       let callable_type =
-        List.fold_right (fun param acc -> Types.TFun (param, acc, false)) arg_types result_type
+        List.fold_right (fun param acc -> Types.TFun (param, acc, Types.Pure)) arg_types result_type
       in
       let callable_go_type = type_to_go state.mono callable_type in
       let args_str = emit_args_with_expected_types arg_types in
@@ -6809,7 +6810,7 @@ and emit_call ?expected_type state type_map env call_expr func args =
           let args_str = emit_args_with_expected_types call_param_types in
           match (callee_type_opt, call_signature_opt) with
           | Some (Types.TUnion _), Some (params, ret) ->
-              let callable_type = List.fold_right (fun p acc -> Types.TFun (p, acc, false)) params ret in
+              let callable_type = List.fold_right (fun p acc -> Types.TFun (p, acc, Types.Pure)) params ret in
               let callable_go_type = type_to_go state.mono callable_type in
               Printf.sprintf "(%s.(%s))(%s)" func_str callable_go_type args_str
           | _ -> Printf.sprintf "%s(%s)" func_str args_str))
@@ -7748,7 +7749,7 @@ let specialized_function_type_bindings
             | Error _ -> effective_return_type)
         | None -> effective_return_type
       in
-      let mk_fun arg ret = Types.TFun (arg, ret, false) in
+      let mk_fun arg ret = Types.TFun (arg, ret, Types.Pure) in
       let declared_func_type = List.fold_right mk_fun declared_param_types declared_return_type in
       let concrete_func_type = List.fold_right mk_fun inst.concrete_types effective_return_type in
       (match Unify.unify declared_func_type concrete_func_type with
@@ -7831,16 +7832,16 @@ let emit_specialized_func
 
   (* Build the concrete function type from parameter types and return type,
      preserving the inferred function-effect arrow kind. *)
-  let arrow_is_effectful =
+  let arrow_effect =
     match generic_func_type with
     | Types.TFun (_, _, eff) -> eff
-    | _ -> false
+    | _ -> Types.Pure
   in
   let mk_fun =
-    if arrow_is_effectful then
-      Types.tfun_eff
-    else
-      Types.tfun
+    match arrow_effect with
+    | Types.Pure -> Types.tfun
+    | Types.Effectful -> Types.tfun_eff
+    | Types.EffectPoly -> Types.tfun_poly
   in
   let concrete_func_type =
     List.fold_right (fun param_t acc -> mk_fun param_t acc) inst.concrete_types inst.return_type
@@ -7907,10 +7908,10 @@ let emit_specialized_func
           Infer.type_callable inferred_map provisional_env_with_func ~type_bindings:[] ~known_param_types ~params
             ~return_annot:None ~known_return:(Some inst.return_type)
             ~effect_annot:
-              (if arrow_is_effectful then
-                 `Effectful
-               else
-                 `Unspecified)
+              (match arrow_effect with
+              | Types.Effectful -> `Effectful
+              | Types.EffectPoly -> `EffectPoly
+              | Types.Pure -> `Unspecified)
             ~strict_return_check:false ~body:func_def.body)
     with
     | Ok (_param_names, _param_types, inferred_body_type, _actual_effectful, subst) ->

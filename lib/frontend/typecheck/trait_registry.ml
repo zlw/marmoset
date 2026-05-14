@@ -13,7 +13,7 @@ type method_sig = {
   method_generics : (string * Constraints.t list) list; (* method-level type parameter names + constraints *)
   method_params : (string * mono_type) list; (* param name and type *)
   method_return_type : mono_type;
-  method_effect : [ `Pure | `Effectful ]; (* -> vs => *)
+  method_effect : [ `Pure | `Effectful | `EffectPoly ]; (* -> vs => vs ~> *)
   method_generic_internal_vars : (string * string) list;
       (* Maps method generic name -> internal TVar name from body inference.
        E.g. [("b", "t0")] means the type_map uses t0 where the generic is b.
@@ -916,6 +916,7 @@ let validate_impl_signature (trait_def : trait_def) (def : impl_def) : (unit, st
             let effect_str = function
               | `Pure -> "->"
               | `Effectful -> "=>"
+              | `EffectPoly -> "~>"
             in
             Error
               (Printf.sprintf "Method '%s': effect mismatch: trait uses %s, impl uses %s" trait_method.method_name

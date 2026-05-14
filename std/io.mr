@@ -21,7 +21,7 @@ trait Write[w, e] = {
   fn flush(writer: w) => Result[Unit, e]
 
   fn print[a: Show](writer: w, value: a) => Result[Unit, e] = {
-    Write.write(writer, "#{value}\n") |> Result.bind((_) -> Write.flush(writer))
+    Write.write(writer, "#{value}\n") |> Result.bind((_) => Write.flush(writer))
   }
 }
 
