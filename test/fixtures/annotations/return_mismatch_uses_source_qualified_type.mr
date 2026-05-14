@@ -1,0 +1,4 @@
+# Return mismatch diagnostics should render module-qualified source type names
+import std.io
+
+fn bad() -> Result[Unit, io.Error] = {}  # error: Result[Unit, std.io.Error]

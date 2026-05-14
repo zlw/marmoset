@@ -12,6 +12,7 @@
 
 module Diagnostic = Diagnostics.Diagnostic
 module Constraints = Constraints
+module Display_names = Display_names
 
 let ( let* ) = Result.bind
 
@@ -684,14 +685,18 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TFun (param_type, return_type, eff) ->
       Printf.sprintf "%s%s%s" (format_mono_type param_type) (Types.effect_to_arrow eff)
         (format_mono_type return_type)
-  | Types.TTraitObject traits -> Printf.sprintf "Dyn[%s]" (String.concat " & " traits)
+  | Types.TTraitObject traits ->
+      Printf.sprintf "Dyn[%s]" (String.concat " & " (List.map Display_names.display_type_name traits))
   | Types.TUnion types -> String.concat " | " (List.map format_mono_type types)
   | Types.TIntersection types -> String.concat " & " (List.map format_mono_type types)
-  | Types.TEnum (name, []) -> name
-  | Types.TEnum (name, args) -> Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
-  | Types.TNamed (name, []) -> name
+  | Types.TEnum (name, []) -> Display_names.display_type_name name
+  | Types.TEnum (name, args) ->
+      Printf.sprintf "%s[%s]" (Display_names.display_type_name name)
+        (String.concat ", " (List.map format_mono_type args))
+  | Types.TNamed (name, []) -> Display_names.display_type_name name
   | Types.TNamed (name, args) ->
-      Printf.sprintf "%s[%s]" name (String.concat ", " (List.map format_mono_type args))
+      Printf.sprintf "%s[%s]" (Display_names.display_type_name name)
+        (String.concat ", " (List.map format_mono_type args))
 
 (* ============================================================
    Phase 4.3: Tests for Enum Type Annotations

@@ -4106,9 +4106,9 @@ and type_callable
                               (error_at_stmt ~code:"type-return-mismatch"
                                  ~message:
                                    ("Function return type annotation mismatch: expected "
-                                   ^ to_string expected_ret'
+                                   ^ Annotation.format_mono_type expected_ret'
                                    ^ " but inferred "
-                                   ^ to_string body_type')
+                                   ^ Annotation.format_mono_type body_type')
                                  body)
                     else
                       (* Permissive mode (top-level functions): subtype + unification fallback.
@@ -4148,9 +4148,9 @@ and type_callable
                               (error_at_stmt ~code:"type-return-mismatch"
                                  ~message:
                                    ("Function return type annotation mismatch: expected "
-                                   ^ to_string expected_ret
+                                   ^ Annotation.format_mono_type expected_ret
                                    ^ " but inferred "
-                                   ^ to_string body_type')
+                                   ^ Annotation.format_mono_type body_type')
                                  body)
                         | Ok subst2 ->
                             let final_subst = compose_substitution subst subst2 in
@@ -4164,9 +4164,9 @@ and type_callable
                           (error_at_stmt ~code:"type-return-mismatch"
                              ~message:
                                ("Function return type annotation mismatch: expected "
-                               ^ to_string expected_ret
+                               ^ Annotation.format_mono_type expected_ret
                                ^ " but inferred "
-                               ^ to_string body_type')
+                               ^ Annotation.format_mono_type body_type')
                              body))))
 
 (* Top-level function adapter: processes generics, maps effect annotation, builds TFun type *)
@@ -6694,9 +6694,9 @@ and validate_return_statements
                   (error_at_stmt ~code:"type-return-mismatch"
                      ~message:
                        ("Function return type annotation mismatch: expected "
-                       ^ to_string expected_type
+                       ^ Annotation.format_mono_type expected_type
                        ^ " but inferred "
-                       ^ to_string inferred_type)
+                       ^ Annotation.format_mono_type inferred_type)
                      stmt)))
   | AST.Block stmts ->
       let rec check_all stmts =
