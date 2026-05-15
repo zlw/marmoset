@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-05-14
+- Last verified: 2026-05-15
 - Implementation status: Planning
 - Area: Language / stdlib / Go backend
 - Related plans:
@@ -60,6 +60,9 @@ The `std.io` output naming slice exposed the distinction:
    ownership, and closing.
 6. Preserve functional semantics for ordinary Marmoset values while allowing
    scoped imperative resources where Go-level performance needs mutation.
+7. Pre-decide the target API, stdlib, and shim shapes before implementation
+   starts; implementation phases should migrate toward those shapes, not invent
+   them while coding.
 
 ## Non-Goals
 
@@ -88,6 +91,171 @@ Stdlib modules should have two layers:
    be thin and should not obscure important runtime behavior.
 
 Function names do not have to copy Go. Representation and semantics should.
+
+## Locked API And Shim Shape
+
+The following choices are locked for this plan. If implementation uncovers a
+real conflict, update this plan first instead of improvising in code.
+
+### Effects
+
+- `->` means pure.
+- `=>` means direct effect; it does not build a Roc/Elm-style effect
+  description.
+- failable effects return `Result`.
+- future `Task`, `Mailbox`, and actor APIs are runtime/concurrency
+  abstractions, not mandatory wrappers for every effect.
+
+### Shims
+
+- Go-backed stdlib modules use checked-in shims under
+  `runtime/go/shims/std/<module>`.
+- project-local Go wrappers for sqlc, gRPC, or application libraries use the
+  same shim-first pattern under a project/app namespace.
+- Marmoset-facing resource types are `extern type`s; Go shims hold the concrete
+  Go implementation details.
+- values crossing into Marmoset are owned `Str`, owned immutable `Bytes`,
+  Marmoset records/enums, or opaque extern resources.
+- borrowed Go slices/views are not part of the public API in this plan.
+- Go errors map to domain-specific Marmoset error enums at the shim boundary.
+  Unknown cases use the module's `Other(Str)`-style variant.
+
+### Data
+
+- `Bytes` remains immutable at the Marmoset layer and maps to owned byte data at
+  the boundary.
+- raw binary APIs use `Bytes`.
+- text APIs use `Str`; conversion between `Bytes` and `Str` stays explicit and
+  fallible when UTF-8 validity matters.
+- public mutable buffer types are not part of the first backend-ready shape.
+  Buffering should first live inside Go-backed resources such as `bufio.Reader`
+  and `bufio.Writer`.
+
+### Terminal IO
+
+`std.io` keeps the current terminal convenience surface:
+
+```marmoset
+fn read() => Result[Str, io.Error]
+fn write(value: Str) => Result[Unit, io.Error]
+fn print[a: Show](value: a) => Result[Unit, io.Error]
+fn puts[a: Show](value: a) => Result[Unit, io.Error]
+fn flush() => Result[Unit, io.Error]
+```
+
+Rules:
+
+- `read` reads one stdin line and strips the line ending.
+- `write` writes an exact `Str` to stdout.
+- `print` renders with `Show` and writes no newline.
+- `puts` renders with `Show` and writes one trailing newline.
+- stdout/stderr `flush` remains callable for symmetry, but the current Go shims
+  are direct writes and therefore do not require flush for prompt visibility.
+- `std.io.err` mirrors stdout with `write`, `print`, `puts`, and `flush`.
+
+### Streams And Buffering
+
+The backend-ready stream layer is byte-oriented. The current text-shaped
+`std.io.Read` / `std.io.Write` proof slice must not become the networking
+foundation.
+
+Target stream traits:
+
+```marmoset
+trait Reader[r, e] = {
+  fn read_chunk(reader: r, size: Int) => Result[Option[Bytes], e]
+}
+
+trait Writer[w, e] = {
+  fn write(writer: w, bytes: Bytes) => Result[Unit, e]
+  fn flush(writer: w) => Result[Unit, e]
+}
+```
+
+Text helpers sit above byte streams:
+
+```marmoset
+fn read_line[r, e](reader: r) => Result[Option[Str], e]
+fn write_str[w, e](writer: w, value: Str) => Result[Unit, e]
+```
+
+`std.bufio` owns buffered resources:
+
+```marmoset
+extern type Reader
+extern type Writer
+
+fn reader_from_file(file: file.File) => Result[Reader, Error]
+fn writer_from_file(file: file.File) => Result[Writer, Error]
+fn read_chunk(reader: Reader, size: Int) => Result[Option[Bytes], Error]
+fn read_line(reader: Reader) => Result[Option[Str], Error]
+fn write(writer: Writer, bytes: Bytes) => Result[Unit, Error]
+fn write_str(writer: Writer, value: Str) => Result[Unit, Error]
+fn flush(writer: Writer) => Result[Unit, Error]
+```
+
+Future `reader_from_conn` / `writer_from_conn` constructors should mirror the
+file constructors when `std.net` lands.
+
+### Files And Directories
+
+Whole-file helpers stay high-level and typed through `Bytes.Encode` /
+`Bytes.Decode`:
+
+```marmoset
+fn read[a: Decode](path: path.Path) => Result[a, file.Error]
+fn write[a: Encode](path: path.Path, value: a) => Result[Unit, file.Error]
+fn append[a: Encode](path: path.Path, value: a) => Result[Unit, file.Error]
+fn copy(from: path.Path, to: path.Path) => Result[Unit, file.Error]
+```
+
+File handles are opaque resources. The target shape is:
+
+```marmoset
+fn open(path: path.Path, mode: file.Mode) => Result[file.File, file.Error]
+fn close(file: file.File) => Result[Unit, file.Error]
+fn with_open[a, e](path: path.Path, mode: file.Mode, body: (file.File) => Result[a, e]) => Result[a, file.UseError[e]]
+fn read_chunk(file: file.File, size: Int) => Result[Option[Bytes], file.Error]
+fn read_line(file: file.File) => Result[Option[Str], file.Error]
+fn write_all(file: file.File, value: Bytes) => Result[Unit, file.Error]
+fn write_str(file: file.File, value: Str) => Result[Unit, file.Error]
+fn sync(file: file.File) => Result[Unit, file.Error]
+```
+
+Migration notes:
+
+- current callback-shaped `file.open(path, mode, body)` should become
+  `file.with_open`.
+- current `flush_handle` / `file.flush` should be renamed to `sync` if it keeps
+  using Go `File.Sync`.
+- ordinary buffered flushing belongs to `std.bufio.Writer.flush`, not
+  `std.file`.
+- using a closed file returns `Error.AlreadyClosed` at runtime; this plan does
+  not require compile-time lifetime proof.
+
+Directories remain scalar filesystem helpers over `std.path.Path` values and
+domain errors. They should not expose Go `os.FileInfo` or raw directory handles
+until a concrete streaming directory API is needed.
+
+### Networking, HTTP, gRPC, And sqlc
+
+- `std.net.Conn` is an opaque extern resource backed by Go networking
+  primitives. It implements the byte-oriented `Reader` / `Writer` target shape.
+- `std.http` should expose Marmoset request/response helpers but keep Go
+  `net/http` details inside shims.
+- server APIs are direct effects and may block:
+
+```marmoset
+fn serve[e](addr: Str, handler: (http.Request) => Result[http.Response, e]) => Result[Unit, http.ServeError[e]]
+```
+
+- `Task` / `Mailbox` / actor APIs should wrap goroutines, channels, contexts,
+  and cancellation inside Marmoset resources. Raw Go channels are not exposed.
+- gRPC and sqlc wrappers use project-local checked-in or generated shims around
+  generated Go. Generated Go structs/clients can appear as opaque extern types;
+  public Marmoset modules expose domain functions returning `Result`.
+- Do not translate generated Go data into generic maps/string blobs unless the
+  domain API explicitly asks for that representation.
 
 ## Impure FP Boundary Model
 
@@ -121,32 +289,31 @@ generated gRPC/sqlc values, and future concurrency abstractions.
 
 ## IO And Buffering Direction
 
-Questions to settle before adding broader IO APIs:
+Implementation should follow the locked shape above:
 
-- Should `std.io.Read` / `std.io.Write` remain text-first, or should the core
-  traits become byte-oriented and text helpers sit above them?
-- Can performant streaming be handled inside Go-backed shims and opaque
-  resources before exposing mutable/borrowed buffer types to Marmoset?
-- Should buffered IO live in `std.bufio`, with extern resources backed by
-  `*bufio.Reader` and `*bufio.Writer`?
-- Should `flush` mean `bufio.Writer.Flush`, while file durability uses a
-  separate `sync` operation for `os.File.Sync`?
-- Should terminal `print` / `puts` use direct stdout/stderr writes, while
-  generic buffered writers expose explicit flushing?
-- Which library-level resource helpers give good ergonomics without committing
-  to ownership/lifetime syntax?
+- terminal `std.io` is text/convenience-oriented;
+- backend streams are byte-oriented;
+- `std.bufio` owns buffered resources backed by Go `bufio`;
+- `flush` means buffered-writer flush;
+- `sync` means durable file sync;
+- no public mutable buffer or borrowed slice API is introduced in the first
+  backend-ready stdlib.
 
-Likely shape:
+Representative buffered use:
 
 ```marmoset
 import std.bufio
 import std.io
 
-let reader = bufio.reader(file)
-let writer = bufio.writer(file)
+let reader = try bufio.reader_from_file(file)
+let writer = try bufio.writer_from_file(file)
 
-try io.write(writer, bytes)
-try io.flush(writer)
+let maybe_payload = try bufio.read_chunk(reader, 8192)
+match maybe_payload {
+  case Option.Some(payload): try bufio.write(writer, payload)
+  case Option.None: try bufio.write_str(writer, "")
+}
+try bufio.flush(writer)
 ```
 
 Avoid making common resource code look like this:
@@ -161,19 +328,18 @@ try file.open(input, (src) => {
 })
 ```
 
-The target shape should flatten common multi-resource acquisition while keeping
-cleanup a library/runtime discipline. Prefer stdlib helpers or later
-`defer`/`use` sugar over ownership/lifetime machinery. For example:
+The target shape should flatten common multi-resource acquisition by moving
+common operations into stdlib helpers and exposing explicit handles where
+needed. For file-copy-like flows, prefer:
 
 ```marmoset
-resource.use3(file.open(input), file.open(output), buffer.with_capacity(8192), (src, dst, scratch) => {
-  try copy_loop(src, dst, scratch)
-})
+try file.copy(input, output)
 ```
 
-The exact helper name and arity story are open. The important constraint is
-that Marmoset should not become callback soup, but also should not require
-Rust-like static resource ownership for the first backend stdlib.
+until a future `defer` / `use` language feature is deliberately planned. The
+important constraint is that Marmoset should not become callback soup, but also
+should not require Rust-like static resource ownership for the first backend
+stdlib.
 
 Convenience helpers may remain pleasant:
 
@@ -241,68 +407,51 @@ For each operation, record:
 - close/flush/sync ownership behavior,
 - error mapping.
 
-### Phase 1: Decide IO Trait Shape
+### Phase 1: Align File And Terminal APIs
 
-Decide whether to keep the current text-shaped traits as terminal conveniences
-or introduce byte-oriented core traits for files, network connections, and
-buffered resources.
+Migrate existing stdlib modules toward the locked shape:
 
-The plan should explicitly decide:
+- keep `std.io` terminal helpers as text/convenience helpers;
+- rename callback-shaped `file.open(path, mode, body)` to `file.with_open`;
+- add handle-returning `file.open(path, mode)` and `file.close(file)`;
+- add `file.copy(from, to)` as the common no-handle copy path;
+- keep whole-file `file.read` / `file.write` / `file.append` typed through
+  `Bytes.Decode` and `Bytes.Encode`;
+- rename file durability from `flush` to `sync` if it still maps to
+  `os.File.Sync`.
 
-- how `Str` encoding/decoding is handled,
-- when `Bytes` is copied,
-- whether a public mutable buffer type is needed now, or whether buffering can
-  stay inside Go-backed resources,
-- whether `read_line` style helpers belong in `io`, `bufio`, or `file`.
+Tests must cover the migration aliases/removals deliberately so user-facing
+examples do not keep drifting.
 
-The decision must preserve this split:
+### Phase 2: Add Byte-Oriented Stream Traits And `std.bufio`
 
-- immutable `Bytes` for stable value semantics;
-- opaque Go-backed resources for performance-sensitive loops;
-- owned value boundaries between resources and normal Marmoset data.
+Introduce the target `Reader` / `Writer` traits and `std.bufio` resources from
+the locked shape.
 
-### Phase 2: Separate Flush From Sync
-
-If file durability remains public, give it a name that matches the Go concept.
-
-Candidate direction:
-
-- `flush`: buffered writer flush,
-- `sync`: durable file sync,
-- terminal stdout/stderr: no public flush requirement for prompt visibility.
-
-### Phase 3: Add Buffered Resources
-
-Introduce a small `std.bufio` proof slice backed by Go `bufio`.
-
-Test:
+Tests:
 
 - buffered writer batches writes and flushes once,
 - flush errors map to domain errors,
-- buffered reader reads lines/chunks without per-byte allocation where possible,
+- buffered reader returns owned line/chunk values,
 - file and network-like resources can share reader/writer capabilities.
 
-### Phase 4: Flatten Runtime Resource Composition
+No public mutable `Buffer` API is added in this phase.
 
-Design and test the resource composition API before broader networking work.
+### Phase 3: Flatten Runtime Resource Composition
+
+Implement the locked resource ergonomics before broader networking work.
 The proof should include at least:
 
-- opening two files and one scratch buffer without nested callback indentation;
-- cleanup on success, failure, and early `try` return;
+- copying or transforming two files without nested callback indentation;
+- explicit close or scoped helper behavior on success, failure, and early
+  `try` return;
 - predictable runtime behavior if a closed or invalid handle is used;
 - readable error propagation when acquisition of the second or third resource
   fails.
 
-Candidate approaches:
-
-- stdlib `resource.with` / `resource.using` helper;
-- later `defer` or `use` sugar with runtime cleanup semantics;
-- arity-specific helpers only as a temporary bridge if the language form is not
-  ready.
-
 Do not require compile-time non-escape proofs in this phase.
 
-### Phase 5: Use The Model In One Host Wrapper
+### Phase 4: Use The Model In One Host Wrapper
 
 Pick one generated/host-backed integration and prove the resource model works.
 Good candidates:
@@ -328,21 +477,18 @@ make integration ffi
 make unit compiler
 ```
 
-## Open Questions
+## Deferred Questions
 
-1. Should the current `io.Write[w, e]` text trait be replaced, renamed, or kept
-   as a convenience above byte-oriented writer capabilities?
-2. Can networking/file performance stay behind Go-backed opaque resources, or
-   do we need a public mutable buffer API before real workloads demand it?
-3. Should resource ergonomics use stdlib helpers first, or should a small
-   `defer`/`use` syntax be planned after the helper shape is proven?
-4. Should `puts` remain the Marmoset line-output helper, or should host-aligned
-   output eventually prefer `println` while keeping `puts` as compatibility
-   sugar?
-5. How much Go stdlib shape should be visible in module names such as `bufio`,
-   `http`, `sql`, and `context`?
-6. Which resource misuse cases should be compile-time errors, and which should
-   remain runtime `Result` failures?
+These are intentionally not part of the first backend-ready stdlib shape:
+
+1. Should Marmoset eventually add `defer` or `use` syntax for runtime cleanup,
+   after the stdlib helper shape is proven?
+2. Do real workloads require a public mutable `Buffer` API, or are owned
+   `Bytes` values plus opaque Go-backed resources enough?
+3. Should `puts` remain the long-term Marmoset line-output helper, or should a
+   future compatibility pass add/prefer `println`?
+4. Which resource misuse cases are worth elevating from runtime `Result`
+   failures into compiler diagnostics later?
 
 ## Progress
 
@@ -362,3 +508,9 @@ make unit compiler
   functions perform direct effects, shims/platform modules are trusted
   imperative Go boundaries, and resource misuse is handled by API discipline
   plus `Result` rather than a Rust-like ownership/lifetime system.
+- 2026-05-15 02:37 CEST: Locked the target API, stdlib, and shim shapes before
+  implementation: terminal IO stays text/convenience-oriented, backend streams
+  become byte-oriented, buffering lives in `std.bufio` opaque Go-backed
+  resources, file durability is `sync` rather than `flush`, file copy is a
+  high-level helper, Go shims return owned values or opaque resources, and
+  gRPC/sqlc/http wrappers follow the same typed shim-first boundary.
