@@ -91,6 +91,9 @@ Stdlib modules should have two layers:
    be thin and should not obscure important runtime behavior.
 
 Function names do not have to copy Go. Representation and semantics should.
+The public stdlib should be trait-first for cross-domain resource capabilities:
+domain modules construct/configure resources and may expose ergonomic wrappers,
+but shared operations are defined by `std.io` traits.
 
 ## Locked API And Shim Shape
 
@@ -153,13 +156,14 @@ Rules:
   are direct writes and therefore do not require flush for prompt visibility.
 - `std.io.err` mirrors stdout with `write`, `print`, `puts`, and `flush`.
 
-### Streams And Buffering
+### Resource Capability Traits
 
-The backend-ready stream layer is byte-oriented. The current text-shaped
-`std.io.Read` / `std.io.Write` proof slice must not become the networking
-foundation.
+`std.io` owns small, law-like capability traits for effectful resources. These
+traits are the canonical extensibility surface across files, buffered files,
+network connections, HTTP bodies, database handles, tasks, and generated
+wrappers.
 
-Target stream traits:
+Target traits:
 
 ```marmoset
 trait Reader[r, e] = {
@@ -168,7 +172,22 @@ trait Reader[r, e] = {
 
 trait Writer[w, e] = {
   fn write(writer: w, bytes: Bytes) => Result[Unit, e]
-  fn flush(writer: w) => Result[Unit, e]
+}
+
+trait Flush[r, e] = {
+  fn flush(resource: r) => Result[Unit, e]
+}
+
+trait Close[r, e] = {
+  fn close(resource: r) => Result[Unit, e]
+}
+
+trait Sync[r, e] = {
+  fn sync(resource: r) => Result[Unit, e]
+}
+
+trait Seek[r, e] = {
+  fn seek(resource: r, offset: Int) => Result[Unit, e]
 }
 ```
 
@@ -179,23 +198,51 @@ fn read_line[r, e](reader: r) => Result[Option[Str], e]
 fn write_str[w, e](writer: w, value: Str) => Result[Unit, e]
 ```
 
-`std.bufio` owns buffered resources:
+Rules:
+
+- `Reader` / `Writer` are byte-oriented. Terminal text helpers remain separate
+  convenience functions.
+- `Flush` means buffered writer flush.
+- `Sync` means durable sync, such as Go `os.File.Sync`.
+- `Close` is intentionally in `std.io`; it covers effectful resources broadly,
+  not only byte streams.
+- domain modules may expose convenience functions such as `file.close(file)` or
+  `db.Tx.close(tx)`, but those functions should delegate to the `std.io` trait
+  implementation rather than defining a second lifecycle contract.
+
+### Buffered Resource Variants
+
+Buffered resources are concrete resources that implement the same `std.io`
+traits. The first target API uses parallel domain modules instead of making
+callers manually wrap resources through `bufio.reader_from_file(...)`.
+
+Direct file API:
 
 ```marmoset
-extern type Reader
-extern type Writer
+import std.file
+import std.io
 
-fn reader_from_file(file: file.File) => Result[Reader, Error]
-fn writer_from_file(file: file.File) => Result[Writer, Error]
-fn read_chunk(reader: Reader, size: Int) => Result[Option[Bytes], Error]
-fn read_line(reader: Reader) => Result[Option[Str], Error]
-fn write(writer: Writer, bytes: Bytes) => Result[Unit, Error]
-fn write_str(writer: Writer, value: Str) => Result[Unit, Error]
-fn flush(writer: Writer) => Result[Unit, Error]
+let f = try file.open(path, file.Mode.Read)
+let chunk = try io.Reader.read_chunk(f, 8192)
+try io.Close.close(f)
 ```
 
-Future `reader_from_conn` / `writer_from_conn` constructors should mirror the
-file constructors when `std.net` lands.
+Buffered file API:
+
+```marmoset
+import std.buf.file
+import std.io
+
+let f = try file.open(path, file.Mode.Read)
+let line = try io.read_line(f)
+try io.Close.close(f)
+```
+
+Importing `std.file` or `std.buf.file` selects the direct or buffered concrete
+resource type. Both resource types implement the relevant `std.io` traits.
+
+Future `std.net` / `std.buf.net` should follow the same pattern for direct and
+buffered network connections.
 
 ### Files And Directories
 
@@ -213,12 +260,8 @@ File handles are opaque resources. The target shape is:
 
 ```marmoset
 fn open(path: path.Path, mode: file.Mode) => Result[file.File, file.Error]
-fn close(file: file.File) => Result[Unit, file.Error]
 fn with_open[a, e](path: path.Path, mode: file.Mode, body: (file.File) => Result[a, e]) => Result[a, file.UseError[e]]
-fn read_chunk(file: file.File, size: Int) => Result[Option[Bytes], file.Error]
-fn read_line(file: file.File) => Result[Option[Str], file.Error]
-fn write_all(file: file.File, value: Bytes) => Result[Unit, file.Error]
-fn write_str(file: file.File, value: Str) => Result[Unit, file.Error]
+fn close(file: file.File) => Result[Unit, file.Error]
 fn sync(file: file.File) => Result[Unit, file.Error]
 ```
 
@@ -228,10 +271,15 @@ Migration notes:
   `file.with_open`.
 - current `flush_handle` / `file.flush` should be renamed to `sync` if it keeps
   using Go `File.Sync`.
-- ordinary buffered flushing belongs to `std.bufio.Writer.flush`, not
-  `std.file`.
+- file-specific `close` and `sync` helpers delegate to `io.Close` and
+  `io.Sync`; shared byte reads/writes go through `io.Reader` and `io.Writer`.
+- ordinary buffered flushing belongs to `io.Flush` implementations on buffered
+  resources, not `std.file`.
 - using a closed file returns `Error.AlreadyClosed` at runtime; this plan does
   not require compile-time lifetime proof.
+
+`std.buf.file` should mirror the same constructor and domain-helper shape where
+it makes sense, but returns a buffered file resource backed by Go `bufio`.
 
 Directories remain scalar filesystem helpers over `std.path.Path` values and
 domain errors. They should not expose Go `os.FileInfo` or raw directory handles
@@ -240,7 +288,8 @@ until a concrete streaming directory API is needed.
 ### Networking, HTTP, gRPC, And sqlc
 
 - `std.net.Conn` is an opaque extern resource backed by Go networking
-  primitives. It implements the byte-oriented `Reader` / `Writer` target shape.
+  primitives. It implements the byte-oriented `io.Reader`, `io.Writer`, and
+  `io.Close` traits. `std.buf.net.Conn` is the buffered counterpart.
 - `std.http` should expose Marmoset request/response helpers but keep Go
   `net/http` details inside shims.
 - server APIs are direct effects and may block:
@@ -293,27 +342,43 @@ Implementation should follow the locked shape above:
 
 - terminal `std.io` is text/convenience-oriented;
 - backend streams are byte-oriented;
-- `std.bufio` owns buffered resources backed by Go `bufio`;
-- `flush` means buffered-writer flush;
-- `sync` means durable file sync;
+- `std.io` owns shared resource capability traits such as `Reader`, `Writer`,
+  `Flush`, `Close`, `Sync`, and `Seek`;
+- domain modules construct/configure resources and may expose thin convenience
+  wrappers that delegate to those traits;
+- buffered resource variants live under parallel domain modules such as
+  `std.buf.file` and later `std.buf.net`;
+- `io.Flush` means buffered-writer flush;
+- `io.Sync` means durable sync;
 - no public mutable buffer or borrowed slice API is introduced in the first
   backend-ready stdlib.
 
-Representative buffered use:
+Representative buffered read:
 
 ```marmoset
-import std.bufio
+import std.bytes
+import std.buf.file
 import std.io
 
-let reader = try bufio.reader_from_file(file)
-let writer = try bufio.writer_from_file(file)
-
-let maybe_payload = try bufio.read_chunk(reader, 8192)
+let file = try file.open(path, file.Mode.Read)
+let maybe_payload = try io.Reader.read_chunk(file, 8192)
 match maybe_payload {
-  case Option.Some(payload): try bufio.write(writer, payload)
-  case Option.None: try bufio.write_str(writer, "")
+  case Option.Some(payload): try io.puts(bytes.to_str_lossy(payload))
+  case Option.None: try io.puts("empty")
 }
-try bufio.flush(writer)
+try io.Close.close(file)
+```
+
+Representative buffered write:
+
+```marmoset
+import std.buf.file
+import std.io
+
+let file = try file.open(path, file.Mode.Write)
+try io.write_str(file, "payload")
+try io.Flush.flush(file)
+try io.Close.close(file)
 ```
 
 Avoid making common resource code look like this:
@@ -362,13 +427,14 @@ But those helpers should lower through normal Go concepts: `os.File`,
   writes. The public docs should not suggest prompt code needs it.
 - `std.io.Read` / `Write` are currently string-shaped terminal/file protocols.
   That may be fine for scripting helpers, but real streaming/networking likely
-  needs bytes and reusable buffers.
+  needs byte-oriented capability traits.
 - `std.bytes.Bytes` is immutable, which is good for app code but not enough for
   zero-copy or low-allocation read loops by itself. The first response should be
   Go-backed opaque resources and owned chunks, not borrowed lifetime APIs.
 - scoped file APIs currently compose through nested callbacks. That proves
-  cleanup, but it scales poorly for ordinary copy/transform flows that need two
-  files plus a scratch buffer.
+  cleanup, but it scales poorly for ordinary copy/transform flows; domain
+  helpers such as `file.copy` should cover common cases, while explicit handles
+  plus `io.Close` cover advanced cases.
 
 ## Networking And Generated Go Pressure
 
@@ -412,6 +478,8 @@ For each operation, record:
 Migrate existing stdlib modules toward the locked shape:
 
 - keep `std.io` terminal helpers as text/convenience helpers;
+- add byte-oriented `std.io` capability traits: `Reader`, `Writer`, `Flush`,
+  `Close`, `Sync`, and `Seek`;
 - rename callback-shaped `file.open(path, mode, body)` to `file.with_open`;
 - add handle-returning `file.open(path, mode)` and `file.close(file)`;
 - add `file.copy(from, to)` as the common no-handle copy path;
@@ -423,17 +491,18 @@ Migrate existing stdlib modules toward the locked shape:
 Tests must cover the migration aliases/removals deliberately so user-facing
 examples do not keep drifting.
 
-### Phase 2: Add Byte-Oriented Stream Traits And `std.bufio`
+### Phase 2: Add Buffered Resource Variants
 
-Introduce the target `Reader` / `Writer` traits and `std.bufio` resources from
-the locked shape.
+Introduce `std.buf.file` resources from the locked shape. Later `std.buf.net`
+should follow the same pattern when networking lands.
 
 Tests:
 
 - buffered writer batches writes and flushes once,
 - flush errors map to domain errors,
 - buffered reader returns owned line/chunk values,
-- file and network-like resources can share reader/writer capabilities.
+- direct and buffered file resources both satisfy the relevant `std.io`
+  capability traits.
 
 No public mutable `Buffer` API is added in this phase.
 
@@ -489,6 +558,9 @@ These are intentionally not part of the first backend-ready stdlib shape:
    future compatibility pass add/prefer `println`?
 4. Which resource misuse cases are worth elevating from runtime `Result`
    failures into compiler diagnostics later?
+5. Does the `std.buf.<domain>` module-family pattern scale beyond files and
+   network connections, or should lower-level explicit buffered wrappers be
+   added for unusual composition stacks later?
 
 ## Progress
 
@@ -510,7 +582,13 @@ These are intentionally not part of the first backend-ready stdlib shape:
   plus `Result` rather than a Rust-like ownership/lifetime system.
 - 2026-05-15 02:37 CEST: Locked the target API, stdlib, and shim shapes before
   implementation: terminal IO stays text/convenience-oriented, backend streams
-  become byte-oriented, buffering lives in `std.bufio` opaque Go-backed
-  resources, file durability is `sync` rather than `flush`, file copy is a
-  high-level helper, Go shims return owned values or opaque resources, and
+  become byte-oriented, file durability is `sync` rather than `flush`, file copy
+  is a high-level helper, Go shims return owned values or opaque resources, and
   gRPC/sqlc/http wrappers follow the same typed shim-first boundary.
+- 2026-05-17 18:02 CEST: Refined the locked shape around Marmoset's trait
+  model. `std.io` now owns cross-domain capability traits such as `Reader`,
+  `Writer`, `Flush`, `Close`, `Sync`, and `Seek`; domain modules construct and
+  configure resources and may provide thin helper functions that delegate to
+  those traits. Buffered resources use parallel domain modules such as
+  `std.buf.file` instead of a primary `std.bufio.reader_from_file` wrapper
+  ceremony.
