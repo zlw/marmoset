@@ -134,6 +134,35 @@ real conflict, update this plan first instead of improvising in code.
   Buffering should first live inside Go-backed resources such as `bufio.Reader`
   and `bufio.Writer`.
 
+### Structural Public Data
+
+Marmoset should be structural-first at the public data layer.
+
+Rules:
+
+- Public business/domain data should prefer Marmoset records, enums, lists,
+  maps, `Option`, and `Result`.
+- Opaque `extern type`s are for runtime resources, host handles, generated
+  clients/servers, streaming bodies, database pools/transactions, and values
+  whose structure is unstable, unsafe, or expensive to expose.
+- Go-generated data from sqlc/gRPC/http wrappers should become Marmoset
+  structural values when it is ordinary application/domain data.
+- Do not expose Go structs as opaque externs just to avoid modeling public
+  domain data in Marmoset.
+- Do not collapse domain data into generic maps/string blobs unless the API is
+  explicitly dynamic, such as raw JSON object traversal.
+- Resource-like values may expose structural accessor functions, but their
+  identity/lifecycle stays opaque.
+
+Examples:
+
+- `sql.User` returned to app code should usually be a Marmoset record.
+- `grpc.UserServiceClient`, `db.Pool`, `db.Tx`, `http.Body`, and `net.Conn`
+  should stay opaque resources.
+- `http.Request` / `http.Response` may be structural wrappers around opaque
+  body resources: headers/status/method/path are structural, body is an
+  `io.Reader` resource.
+
 ### Terminal IO
 
 `std.io` keeps the current terminal convenience surface:
@@ -301,8 +330,9 @@ fn serve[e](addr: Str, handler: (http.Request) => Result[http.Response, e]) => R
 - `Task` / `Mailbox` / actor APIs should wrap goroutines, channels, contexts,
   and cancellation inside Marmoset resources. Raw Go channels are not exposed.
 - gRPC and sqlc wrappers use project-local checked-in or generated shims around
-  generated Go. Generated Go structs/clients can appear as opaque extern types;
-  public Marmoset modules expose domain functions returning `Result`.
+  generated Go. Generated Go clients, servers, handles, and streaming resources
+  can appear as opaque extern types; generated application/domain data should
+  become Marmoset records/enums when it crosses into public Marmoset APIs.
 - Do not translate generated Go data into generic maps/string blobs unless the
   domain API explicitly asks for that representation.
 
@@ -561,6 +591,8 @@ These are intentionally not part of the first backend-ready stdlib shape:
 5. Does the `std.buf.<domain>` module-family pattern scale beyond files and
    network connections, or should lower-level explicit buffered wrappers be
    added for unusual composition stacks later?
+6. Which generated host values should stay opaque for performance/lifecycle
+   reasons, and which should be converted to public structural Marmoset data?
 
 ## Progress
 
@@ -592,3 +624,8 @@ These are intentionally not part of the first backend-ready stdlib shape:
   those traits. Buffered resources use parallel domain modules such as
   `std.buf.file` instead of a primary `std.bufio.reader_from_file` wrapper
   ceremony.
+- 2026-05-18 00:07 CEST: Locked the structural-first data rule: public
+  business/domain data should be Marmoset records/enums/collections, while
+  opaque externs are reserved for runtime resources, host handles, generated
+  clients/servers, streaming bodies, and values whose structure is unsafe,
+  unstable, or too expensive to expose.
