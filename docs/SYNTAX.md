@@ -198,6 +198,11 @@ let items: List[Dyn[Show]] = [42, "hello", true]
 - A block evaluates to its last expression value.
 - `let` introduces bindings in block scope.
 - `if` is an expression and both branches must type-check to a compatible type.
+- `Result` values are must-use. A bare `Result` expression statement, block statement, or `let _ = ...`
+  discard is rejected. Return it, bind it to a named variable, match it, propagate it with `try`, recover
+  with `try ... or ...`, or compose it with `Result.bind`/`map`/`wrap`/`value_or`.
+- At top level, `try` is valid for scripting-style entrypoints: `Result.Failure` prints the error and exits
+  with status `1`, while `Option.None` exits with status `1` without printing.
 
 ## 9. Match
 Canonical form:
@@ -246,7 +251,7 @@ Notes:
 - Effectful: `(x) => expr`, `(a, b) => expr`
 
 ### 11.2 Placeholder Shorthand
-- Single-arg pure shorthand only.
+- Single-arg shorthand.
 - `_` can appear in nested expression positions.
 
 Examples:
@@ -266,7 +271,7 @@ Restrictions:
 - Expression must contain exactly one placeholder `_`.
 - Expressions with zero placeholders remain ordinary expressions and are not rewritten.
 - Multi-placeholder forms like `_ + _` are rejected.
-- Effectful callbacks require explicit `=>` lambda (no placeholder effectful form).
+- Placeholder sections infer their callable effect from the rewritten body.
 - Placeholder rewrite does not fire inside an explicit `(x) -> ...` or `(x) => ...` body.
 
 ## 12. Canonical Example (Condensed)
@@ -560,7 +565,9 @@ fn g[t0: Show & Eq](x: t0) -> Str = ...
 
 ### 13.8 Placeholder Lambda Rewrite
 Rule:
-- If expression `E` contains exactly one placeholder `_` and no explicit lambda arrow, rewrite to `(it) -> E[it/_]` with fresh `it`.
+- If expression `E` contains exactly one placeholder `_` and no explicit lambda arrow, rewrite to a
+  single-argument function over `E[it/_]` with fresh `it`; the function effect is inferred from the
+  rewritten body.
 
 Examples:
 ```mr
@@ -582,7 +589,6 @@ Zero-placeholder expressions are left unchanged.
 
 Errors:
 - Any expression containing more than one placeholder is rejected.
-- Effectful intent with placeholder is not inferred. Use explicit `=>` lambda.
 - Explicit lambda bodies are not rewritten. `_` stays a literal identifier inside `(x) -> ...` or `(x) => ...`.
 
 ### 13.9 Trait/Impl/Derive Validation Rules
@@ -633,3 +639,10 @@ Errors:
   - constrained-param shorthand,
   - `Dyn[...]`
   still use `ConstraintExpr`, not general type intersections.
+
+### 13.13 Must-Use Result Validation Rules
+- Any statement position that discards its value must reject `Result[a, e]`.
+- Discarding positions include expression statements, block statements used as statements, and wildcard
+  bindings (`let _ = ...`).
+- Tail expressions are not discards when their value is the enclosing block/function result.
+- Named `let` bindings are not discards; separate unused-variable analysis is out of scope for this rule.

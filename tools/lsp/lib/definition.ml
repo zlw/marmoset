@@ -277,6 +277,11 @@ and find_namespace_ref_in_children ~(source : string) ~(offset : int) (expr : As
            fields)
         (Option.bind spread (find_namespace_ref_in_expr ~source ~offset))
   | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_namespace_ref_in_expr ~source ~offset) args
+  | Ast.AST.Try { tried; fallback; _ } ->
+      first_some
+        (find_namespace_ref_in_expr ~source ~offset tried)
+        (Option.bind fallback (find_namespace_ref_in_expr ~source ~offset))
+  | Ast.AST.Wrap { wrapped; _ } -> find_namespace_ref_in_expr ~source ~offset wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_namespace_ref_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
@@ -302,7 +307,9 @@ and find_namespace_ref_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.AS
           Option.bind method_.method_default_impl (find_namespace_ref_in_expr ~source ~offset))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+      None
 
 let find_namespace_ref_in_program ~(source : string) ~(offset : int) (program : Ast.AST.program) :
     namespace_ref option =
@@ -542,21 +549,26 @@ let cursor_reference_target
             Option.bind (same_file_symbol analysis ~expr_id) value_namespace_symbol_target)
       in
       let method_target =
-        match Compiler.find_active_file_method_resolution analysis ~expr_id:access_expr_id with
+        match Compiler.find_active_file_call_resolution analysis ~expr_id:access_expr_id with
         | Some
-            ( Marmoset.Lib.Infer.TraitMethod trait_name
-            | Marmoset.Lib.Infer.DynamicTraitMethod trait_name
-            | Marmoset.Lib.Infer.QualifiedTraitMethod trait_name ) ->
+            ( Typecheck.Resolution_artifacts.TraitMethod trait_name
+            | Typecheck.Resolution_artifacts.DynamicTraitMethod trait_name
+            | Typecheck.Resolution_artifacts.QualifiedTraitMethod trait_name ) ->
             definition_target_of_exact_site
               (Compiler.find_trait_method_declaration_site analysis ~trait_name ~method_name:member_ref.text)
-        | Some (Marmoset.Lib.Infer.InherentMethod | Marmoset.Lib.Infer.QualifiedInherentMethod) ->
+        | Some
+            ( Typecheck.Resolution_artifacts.InherentMethod
+            | Typecheck.Resolution_artifacts.QualifiedInherentMethod ) ->
             Option.bind
               (Compiler.resolve_visible_type_name_to_mono analysis ~file_path:active_file_path
                  ~surface_name:root_ref.text) (fun receiver_type ->
                 definition_target_of_exact_site
                   (Compiler.find_inherent_method_declaration_site analysis ~receiver_type
                      ~method_name:member_ref.text))
-        | Some Marmoset.Lib.Infer.FieldFunctionCall | None -> None
+        | Some Typecheck.Resolution_artifacts.FieldFunctionCall
+        | Some (Typecheck.Resolution_artifacts.ShimQualifiedCall _)
+        | None ->
+            None
       in
       let module_root_target =
         Option.bind (namespace_roots_of_analysis analysis) (fun namespace_roots ->
@@ -879,6 +891,42 @@ let%test "enum constructor member resolves to the variant declaration head" =
         ~actual:
           (definition_at ~file_id:main_path ~source:main_source ~needle:"Option.Some" ~offset_in_needle:7 ())
         ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"Some" ()))
+
+let%test "error enum constructor member resolves to the messaged variant declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "type FileError = { NotFound = \"File not found\", InvalidData(Str) = \"File contains invalid data\" }\nlet err = FileError.NotFound\nerr\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "type FileError = { NotFound = \"File not found\", InvalidData(Str) = \"File contains invalid data\" }\nlet err = FileError.NotFound\nerr\n"
+      in
+      expect_target ~label:"error enum constructor member"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.NotFound" ~offset_in_needle:10
+             ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"NotFound" ()))
+
+let%test "bare wrap target resolves to the messaged variant declaration head" =
+  Doc_state.with_temp_project
+    [
+      ( "main.mr",
+        "type DecodeError = { Bad = \"Bad decode\" }\ntype FileError = { InvalidData(DecodeError) = \"File contains invalid data\" }\nfn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)\nlet result = decode() wrap FileError.InvalidData\nresult\n"
+      );
+    ]
+    (fun root ->
+      let main_path = Filename.concat root "main.mr" in
+      let main_source =
+        "type DecodeError = { Bad = \"Bad decode\" }\ntype FileError = { InvalidData(DecodeError) = \"File contains invalid data\" }\nfn decode() -> Result[Str, DecodeError] = Result.Failure(DecodeError.Bad)\nlet result = decode() wrap FileError.InvalidData\nresult\n"
+      in
+      expect_target ~label:"bare wrap target"
+        ~actual:
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.InvalidData"
+             ~offset_in_needle:10 ())
+        ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"InvalidData" ()))
 
 let%test "constraint annotation resolves to trait declaration head" =
   Doc_state.with_temp_project

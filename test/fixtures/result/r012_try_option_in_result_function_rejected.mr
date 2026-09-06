@@ -1,0 +1,11 @@
+# R012: try Option without fallback requires an Option-returning function
+type Error = {
+  Missing = "Missing value",
+}
+
+fn maybe() -> Option[Int] = Option.None
+
+fn bad() -> Result[Int, Error] = {
+  let value = try maybe()  # error: try on Option requires enclosing function to return Option
+  Result.Success(value)
+}

@@ -1,6 +1,10 @@
 package main
 
-import "strconv"
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+	"strconv"
+)
 
 type marmosetDyn struct{ payload any; witness any }
 
@@ -14,8 +18,26 @@ var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_sh
 type Box struct{tag int64; value marmosetDyn}
 type Record_tag_int64_value_int64 struct{tag int64; value int64}
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
+
+func puts_string(value string) struct{} {
+    return extern__std_basics__puts_str(show_show_string(value))
+}
+
 func show_show_int64(x int64) string {
 	return strconv.FormatInt(x, 10)
+}
+
+func show_show_string(x string) string {
+	return x
 }
 func main() {
     var box Box = (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: marmosetDyn{payload: __src.value, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}} })(Record_tag_int64_value_int64{tag: int64(0), value: int64(1)})
@@ -29,5 +51,5 @@ func main() {
         }
     updated := Box{tag: __spread_0.tag, value: marmosetDyn{payload: __field_payload_1, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}}
     _ = updated
-    _ = puts((func() string { __dyn := (updated).value; __witness := __dyn.witness.(marmosetDynWitness_show); return __witness.show(__dyn.payload) })())
+    _ = puts_string((func() string { __dyn := (updated).value; __witness := __dyn.witness.(marmosetDynWitness_show); return __witness.show(__dyn.payload) })())
 }

@@ -1,0 +1,8 @@
+type Error = {
+  Boom = "Boom",
+}
+
+fn source() -> Result[Str, Error] = Result.Success("ok")
+
+let _ = source()  # error: unused Result
+"done"

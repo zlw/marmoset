@@ -48,6 +48,8 @@ checked-in manifest with `./tools/zed-marmoset/scripts/set-grammar-source.sh pin
 ## Features
 
 - Syntax highlighting (keywords, types, literals, operators, comments, etc.)
+- LSP diagnostics, hover, and completions via `$MARMOSET_ROOT/marmoset lsp`
+  or the opened worktree's `marmoset lsp`
 - Bracket matching and rainbow brackets
 - Auto-indentation for blocks, arrays, objects, match arms
 - Code outline (let bindings, types, shapes, enums, traits, impls, methods)
@@ -55,3 +57,7 @@ checked-in manifest with `./tools/zed-marmoset/scripts/set-grammar-source.sh pin
 ## Requirements
 
 Depends on the `tree-sitter-marmoset` grammar in the main Marmoset repository.
+Build the repo-local `marmoset` binary with `make build`. The extension prefers
+`$MARMOSET_ROOT/marmoset lsp` when `MARMOSET_ROOT` is set, and otherwise launches
+`marmoset lsp` from the opened Zed worktree root. It does not search `PATH` for
+another language server.

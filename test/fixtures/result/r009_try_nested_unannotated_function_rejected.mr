@@ -1,0 +1,12 @@
+# R009: try inside a nested function uses that function's return context
+type Error = {
+  Missing = "Missing value",
+}
+
+fn outer() -> Result[Str, Error] = {
+  let inner = () -> {
+    let value = try Result.Success("value")  # error: enclosing function must return Result
+    value
+  }
+  Result.Success(inner())
+}

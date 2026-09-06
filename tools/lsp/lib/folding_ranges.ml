@@ -62,6 +62,10 @@ let rec walk_expr ~source ~ranges (expr : Ast.AST.expression) =
       walk_expr ~source ~ranges mc_receiver;
       List.iter (walk_expr ~source ~ranges) mc_args
   | Ast.AST.EnumConstructor (_, _, args) -> List.iter (walk_expr ~source ~ranges) args
+  | Ast.AST.Try { tried; fallback; _ } ->
+      walk_expr ~source ~ranges tried;
+      Option.iter (walk_expr ~source ~ranges) fallback
+  | Ast.AST.Wrap { wrapped; _ } -> walk_expr ~source ~ranges wrapped
   | Ast.AST.TypeCheck (e, _) -> walk_expr ~source ~ranges e
   | Ast.AST.BlockExpr stmts -> List.iter (walk_stmt ~source ~ranges) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
@@ -98,7 +102,9 @@ and walk_stmt ~source ~ranges (stmt : Ast.AST.statement) =
   | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ ->
       maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> ()
+  | Ast.AST.ExternBlock _ ->
+      maybe_range ~source ~pos:stmt.pos ~end_pos:stmt.end_pos ~kind:Lsp_t.FoldingRangeKind.Region ranges
+  | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ | Ast.AST.ExternTypeDef _ -> ()
 
 (* Public entry point *)
 let compute ~(source : string) ~(program : Ast.AST.program) : Lsp_t.FoldingRange.t list =
@@ -124,6 +130,10 @@ let%test "multi-line function body produces folding range" =
 let%test "single-line function produces no folding range" =
   let ranges = get_ranges "let f = (x) -> { x }" in
   List.length ranges = 0
+
+let%test "multi-line extern block produces folding range" =
+  let ranges = get_ranges "extern \"strings\" = {\n  fn ToUpper(s: Str) -> Str\n}" in
+  List.length ranges = 1
 
 let%test "multi-line enum produces folding range" =
   let ranges = get_ranges "enum Color = {\n  Red\n  Green\n  Blue\n}" in

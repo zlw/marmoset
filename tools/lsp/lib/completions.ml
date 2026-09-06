@@ -64,6 +64,7 @@ let keywords =
     ("trait", "Trait (interface) definition");
     ("impl", "Trait implementation");
     ("derive", "Automatic trait derivation");
+    ("extern", "Trusted Go FFI declarations");
     ("override", "Trait default replacement");
     ("true", "Boolean literal");
     ("false", "Boolean literal");
@@ -336,6 +337,7 @@ type visible_type_kind =
   | Wrapper_type
   | Enum_type of Surface.surface_variant_def list
   | Product_type
+  | Opaque_type
   | Transparent_type
   | Shape_type
   | Trait_type
@@ -345,6 +347,8 @@ let classify_visible_type_in_surface_program (program : Surface.surface_program)
   List.find_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
+      | Surface.SExternTypeDef { extern_type_name; _ } when String.equal extern_type_name surface_name ->
+          Some Opaque_type
       | Surface.STypeDef { type_name; type_body; _ } when String.equal type_name surface_name -> (
           match type_body with
           | Surface.STNamedWrapper _ -> Some Wrapper_type
@@ -371,8 +375,8 @@ let visible_type_kind_of_name ~(analysis : Doc_state.analysis_result) ~(surface_
       | Some presence -> (
           let parsed_module =
             first_some
-              (Compiler.find_parsed_module_by_file compiler_analysis ~file_path)
               (Compiler.parsed_module_of_presence compiler_analysis presence)
+              (Compiler.find_parsed_module_by_file compiler_analysis ~file_path)
           in
           let fallback =
             if presence.has_enum then
@@ -426,14 +430,14 @@ let visible_enum_variants ~(analysis : Doc_state.analysis_result) ~(type_name : 
   | _ -> None
 
 let method_poly_detail (method_sig : Trait_registry.method_sig) : string =
-  let is_effectful = method_sig.method_effect = `Effectful in
+  let effect = Infer.effect_of_trait_effect method_sig.method_effect in
   let fn_type =
     List.fold_right
       (fun (_name, typ) acc ->
-        if is_effectful then
-          Types.tfun_eff typ acc
-        else
-          Types.tfun typ acc)
+        match effect with
+        | Types.Pure -> Types.tfun typ acc
+        | Types.Effectful -> Types.tfun_eff typ acc
+        | Types.EffectPoly -> Types.tfun_poly typ acc)
       method_sig.method_params method_sig.method_return_type
   in
   detail_of_poly (Types.Forall (List.map fst method_sig.method_generics, fn_type))
@@ -526,6 +530,7 @@ let value_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : st
                   }
             | Some (Enum_type _)
             | Some Product_type
+            | Some Opaque_type
             | Some Transparent_type
             | Some Shape_type
             | Some Trait_type
@@ -618,7 +623,7 @@ let type_identifier_items ~(analysis : Doc_state.analysis_result) ~(prefix : str
             | Some Wrapper_type | Some Product_type | Some Transparent_type ->
                 add_semantic_item items
                   { label; kind = Lsp_t.CompletionItemKind.Struct; detail = Some "type"; sort_text = Some label }
-            | Some Shape_type | Some Trait_type | None -> ())
+            | Some Opaque_type | Some Shape_type | Some Trait_type | None -> ())
         (visible_presence_bindings navigation))
     (current_navigation analysis);
   Hashtbl.to_seq_values items
@@ -911,7 +916,7 @@ let qualified_member_context
             match visible_type_kind_of_name ~analysis ~surface_name:root_name with
             | Some (Enum_type _) -> Some (EnumConstructorMember { type_name = root_name; prefix })
             | Some Trait_type -> Some (TraitMethodMember { trait_name = root_name; prefix })
-            | Some Shape_type -> Some Unsupported
+            | Some Shape_type | Some Opaque_type -> Some Unsupported
             | Some Wrapper_type | Some Product_type | Some Transparent_type ->
                 Some (InherentMethodMember { type_name = root_name; prefix })
             | None -> None))
@@ -1138,6 +1143,7 @@ let%test "completions include keywords" =
   && List.mem "fn" labels
   && List.mem "match" labels
   && List.mem "case" labels
+  && List.mem "extern" labels
   && List.mem "override" labels
 
 let%test "function gets Function kind" =

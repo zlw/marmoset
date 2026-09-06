@@ -265,14 +265,22 @@ let exportable_decl_keys ~(default_file_path : string) (program : Export_edits.S
       | Export_edits.Surface.STypeDef { type_name; type_name_ref; _ } ->
           with_decl
             { surface_name = type_name; declaration_kind = Export_edits.Type_decl; name_ref = type_name_ref }
+      | Export_edits.Surface.SExternTypeDef { extern_type_name; extern_type_name_ref } ->
+          with_decl
+            {
+              surface_name = extern_type_name;
+              declaration_kind = Export_edits.Type_decl;
+              name_ref = extern_type_name_ref;
+            }
       | Export_edits.Surface.SShapeDef { shape_name; shape_name_ref; _ } ->
           with_decl
             { surface_name = shape_name; declaration_kind = Export_edits.Shape_decl; name_ref = shape_name_ref }
       | Export_edits.Surface.STraitDef { name; name_ref; _ } ->
           with_decl { surface_name = name; declaration_kind = Export_edits.Trait_decl; name_ref }
       | Export_edits.Surface.SExportDecl _ | Export_edits.Surface.SImportDecl _
-      | Export_edits.Surface.SAmbiguousImplDef _ | Export_edits.Surface.SInherentImplDef _
-      | Export_edits.Surface.SExpressionStmt _ | Export_edits.Surface.SReturn _ | Export_edits.Surface.SBlock _ ->
+      | Export_edits.Surface.SExternBlock _ | Export_edits.Surface.SAmbiguousImplDef _
+      | Export_edits.Surface.SInherentImplDef _ | Export_edits.Surface.SExpressionStmt _
+      | Export_edits.Surface.SReturn _ | Export_edits.Surface.SBlock _ ->
           None)
     program
 

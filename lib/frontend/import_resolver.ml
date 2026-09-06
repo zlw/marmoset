@@ -7,12 +7,14 @@ module StringSet = Set.Make (String)
 let prelude_module_id = "std.prelude"
 let option_module_id = "std.option"
 let result_module_id = "std.result"
-let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
+let prelude_support_module_id = "std.basics"
+let core_stdlib_modules = [ prelude_module_id; prelude_support_module_id; option_module_id; result_module_id ]
 
 type member_presence = {
   internal_name : string;
   has_value : bool;
   value_definition : Module_sig.definition_site option;
+  extern_func_key : string option;
   has_enum : bool;
   enum_definition : Module_sig.definition_site option;
   has_named_type : bool;
@@ -104,6 +106,7 @@ let is_std_module_id (module_id : string) : bool =
 
 let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
   match (module_id, name) with
+  | "std.basics", "puts" -> true
   | "std.prelude", ("Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg") -> true
   | "std.option", "Option" -> true
   | "std.result", "Result" -> true
@@ -111,7 +114,9 @@ let is_locked_std_core_name ~(module_id : string) (name : string) : bool =
 
 let is_implicit_std_core_name (name : string) : bool =
   match name with
-  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "Option" | "Result" -> true
+  | "Ordering" | "Eq" | "Show" | "Debug" | "Ord" | "Hash" | "Num" | "Rem" | "Neg" | "puts" | "Option" | "Result"
+    ->
+      true
   | _ -> false
 
 let binding_internal_name ?(preserve_source_name = false) ~(module_id : string) (name : string) : string =
@@ -132,6 +137,7 @@ let merge_presence
     ~(internal_name : string)
     ?(has_value = false)
     ?value_definition
+    ?extern_func_key
     ?(has_enum = false)
     ?enum_definition
     ?(has_named_type = false)
@@ -149,6 +155,7 @@ let merge_presence
         internal_name;
         has_value;
         value_definition;
+        extern_func_key;
         has_enum;
         enum_definition;
         has_named_type;
@@ -161,10 +168,25 @@ let merge_presence
         trait_definition;
       }
   | Some prior ->
+      let incoming_concrete_value = has_value && Option.is_none extern_func_key in
+      let prior_concrete_value = prior.has_value && Option.is_none prior.extern_func_key in
+      let merged_value_definition =
+        if incoming_concrete_value then
+          value_definition
+        else
+          Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition
+      in
+      let merged_extern_func_key =
+        if incoming_concrete_value || prior_concrete_value then
+          None
+        else
+          Option.fold ~none:extern_func_key ~some:(fun key -> Some key) prior.extern_func_key
+      in
       {
         internal_name = prior.internal_name;
         has_value = prior.has_value || has_value;
-        value_definition = Option.fold ~none:value_definition ~some:(fun site -> Some site) prior.value_definition;
+        value_definition = merged_value_definition;
+        extern_func_key = merged_extern_func_key;
         has_enum = prior.has_enum || has_enum;
         enum_definition = Option.fold ~none:enum_definition ~some:(fun site -> Some site) prior.enum_definition;
         has_named_type = prior.has_named_type || has_named_type;
@@ -190,6 +212,15 @@ let definition_site_of_stmt ~(fallback_file_path : string) (stmt : AST.statement
     end_pos = stmt.end_pos;
   }
 
+let definition_site_of_extern_fn
+    ~(fallback_file_path : string) (stmt : AST.statement) (fn_sig : AST.extern_fn_sig) :
+    Module_sig.definition_site =
+  {
+    file_path = Option.value stmt.file_id ~default:fallback_file_path;
+    start_pos = fn_sig.extern_fn_pos;
+    end_pos = fn_sig.extern_fn_end_pos;
+  }
+
 let presence_of_decl
     module_id
     ~(preserve_top_level_names : bool)
@@ -201,6 +232,7 @@ let presence_of_decl
       name
       ~has_value
       ?value_definition
+      ?extern_func_key
       ~has_enum
       ?enum_definition
       ~has_named_type
@@ -215,7 +247,7 @@ let presence_of_decl
     let internal_name = binding_internal_name ~preserve_source_name:preserve_top_level_names ~module_id name in
     let presence =
       merge_presence (StringMap.find_opt name decls) ~internal_name ~has_value ~has_enum ~has_named_type
-        ?value_definition ?enum_definition ?named_type_definition ?transparent_type_definition
+        ?value_definition ?extern_func_key ?enum_definition ?named_type_definition ?transparent_type_definition
         ~has_transparent_type ?shape_definition ~has_shape ?trait_definition ~has_trait ()
     in
     add_presence decls name presence
@@ -230,6 +262,9 @@ let presence_of_decl
   | AST.TypeDef { type_name; _ } ->
       add type_name ~has_value:false ~has_enum:false ~has_named_type:true ~named_type_definition:definition_site
         ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
+  | AST.ExternTypeDef { extern_type_name } ->
+      add extern_type_name ~has_value:false ~has_enum:false ~has_named_type:true
+        ~named_type_definition:definition_site ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
   | AST.ShapeDef { shape_name; _ } ->
       add shape_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:false
         ~has_shape:true ~shape_definition:definition_site ~has_trait:false ()
@@ -239,6 +274,24 @@ let presence_of_decl
   | AST.TypeAlias { alias_name; _ } ->
       add alias_name ~has_value:false ~has_enum:false ~has_named_type:false ~has_transparent_type:true
         ~transparent_type_definition:definition_site ~has_shape:false ~has_trait:false ()
+  | AST.ExternBlock block ->
+      List.fold_left
+        (fun decls_acc (fn_sig : AST.extern_fn_sig) ->
+          let value_definition = definition_site_of_extern_fn ~fallback_file_path:file_path stmt fn_sig in
+          let extern_func_key =
+            Typecheck.Extern_registry.shim_key ~shim_id:block.extern_shim_id ~func_name:fn_sig.extern_fn_name
+          in
+          let internal_name =
+            binding_internal_name ~preserve_source_name:preserve_top_level_names ~module_id fn_sig.extern_fn_name
+          in
+          let presence =
+            merge_presence
+              (StringMap.find_opt fn_sig.extern_fn_name decls_acc)
+              ~internal_name ~has_value:true ~value_definition ~extern_func_key ~has_enum:false
+              ~has_named_type:false ~has_transparent_type:false ~has_shape:false ~has_trait:false ()
+          in
+          add_presence decls_acc fn_sig.extern_fn_name presence)
+        decls block.extern_fns
   | _ -> decls
 
 let export_error (module_info : Module_context.parsed_module) ~(name : string) : Diagnostic.t =
@@ -378,6 +431,8 @@ let add_named_export_if_present
 let implicit_direct_modules_for_module (module_id : string) : string list =
   if String.equal module_id prelude_module_id then
     []
+  else if String.equal module_id prelude_support_module_id then
+    []
   else if String.equal module_id option_module_id || String.equal module_id result_module_id then
     [ prelude_module_id ]
   else if is_std_module_id module_id then
@@ -393,6 +448,11 @@ let implicit_direct_bindings_for_module
     | Some prelude_surface -> StringMap.fold StringMap.add prelude_surface.exports bindings
     | None -> bindings
   in
+  let add_basics_exports bindings =
+    match Hashtbl.find_opt surfaces prelude_support_module_id with
+    | Some basics_surface -> add_named_export_if_present ~surface:basics_surface ~export_name:"puts" bindings
+    | None -> bindings
+  in
   let add_type_export module_id export_name bindings =
     match Hashtbl.find_opt surfaces module_id with
     | Some surface -> add_named_export_if_present ~surface ~export_name bindings
@@ -400,13 +460,16 @@ let implicit_direct_bindings_for_module
   in
   if String.equal current_module.module_id prelude_module_id then
     StringMap.empty
+  else if String.equal current_module.module_id prelude_support_module_id then
+    StringMap.empty
   else if
     String.equal current_module.module_id option_module_id
     || String.equal current_module.module_id result_module_id
   then
-    add_prelude_exports StringMap.empty
+    add_prelude_exports StringMap.empty |> add_basics_exports
   else
     add_prelude_exports StringMap.empty
+    |> add_basics_exports
     |> add_type_export option_module_id "Option"
     |> add_type_export result_module_id "Result"
 
@@ -697,11 +760,11 @@ let rec rewrite_type_expr
       AST.TApp (rewrite_name name, List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) args)
   | AST.TTraitObject traits ->
       AST.TTraitObject (rewrite_constraints ~imports ~type_bindings ~available_bindings traits)
-  | AST.TArrow (params, ret, is_effectful) ->
+  | AST.TArrow (params, ret, effect) ->
       AST.TArrow
         ( List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) params,
           rewrite_type_expr ~imports ~type_bindings ~available_bindings ret,
-          is_effectful )
+          effect )
   | AST.TUnion members ->
       AST.TUnion (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) members)
   | AST.TIntersection members ->
@@ -716,6 +779,11 @@ let rec rewrite_type_expr
               })
             fields,
           Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) row )
+
+let rewrite_named_type_reference ~imports ~type_bindings ~available_bindings name =
+  match rewrite_type_expr ~imports ~type_bindings ~available_bindings (AST.TCon name) with
+  | AST.TCon rewritten -> rewritten
+  | _ -> name
 
 let identifier_expr_like original name = { original with AST.expr = AST.Identifier name }
 
@@ -741,6 +809,15 @@ let namespace_resolution_error
         ~end_pos:expr.end_pos ()
   | None -> Diagnostic.error_no_span ~code:"module-qualified-name" ~message
 
+let extern_qualifier_collision_error (stmt : AST.statement) ~(qualifier : string) ~(reason : string) :
+    Diagnostic.t =
+  let message = Printf.sprintf "extern qualifier '%s' conflicts with %s" qualifier reason in
+  match stmt.file_id with
+  | Some file_id ->
+      Diagnostic.error_with_span ~code:"module-extern-qualifier-collision" ~message ~file_id ~start_pos:stmt.pos
+        ~end_pos:stmt.end_pos ()
+  | None -> Diagnostic.error_no_span ~code:"module-extern-qualifier-collision" ~message
+
 let rewrite_program
     ~(current_module : module_surface)
     ~(imports : resolved_imports)
@@ -761,20 +838,87 @@ let rewrite_program
       StringMap.add name rewritten_name value_scope
   in
   let bind_local_value value_scope name = bind_value value_scope ~name ~rewritten_name:name in
-  let rec rewrite_statements ~at_top_level value_scope stmts =
+  let validate_extern_qualifier (stmt : AST.statement) (block : AST.extern_block_def) :
+      (unit, Diagnostic.t) result =
+    let qualifier = block.extern_qualifier in
+    if StringMap.mem qualifier current_module.declarations then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"a top-level declaration")
+    else if StringMap.mem qualifier imports.namespace_roots then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an imported module namespace")
+    else if StringMap.mem qualifier imports.direct_bindings then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an imported binding")
+    else if is_implicit_std_core_name qualifier then
+      Error (extern_qualifier_collision_error stmt ~qualifier ~reason:"an implicit core binding")
+    else
+      Ok ()
+  in
+  let rewrite_extern_block (block : AST.extern_block_def) : AST.extern_block_def =
+    let canonical_std_extern_type_name (name : string) : string =
+      let is_current_module_decl = StringMap.mem name current_module.declarations in
+      if (not is_current_module_decl) && String.equal name "Option" then
+        match direct_type_internal_name available_bindings name with
+        | Some "Option" -> Typecheck.Shim_boundary.option_enum_name
+        | _ -> name
+      else if (not is_current_module_decl) && String.equal name "Result" then
+        match direct_type_internal_name available_bindings name with
+        | Some "Result" -> Typecheck.Shim_boundary.result_enum_name
+        | _ -> name
+      else
+        name
+    in
+    let rec canonicalize_std_extern_type_expr (te : AST.type_expr) : AST.type_expr =
+      match te with
+      | AST.TVar _ -> te
+      | AST.TCon name -> AST.TCon (canonical_std_extern_type_name name)
+      | AST.TApp (name, args) ->
+          AST.TApp (canonical_std_extern_type_name name, List.map canonicalize_std_extern_type_expr args)
+      | AST.TTraitObject _ -> te
+      | AST.TArrow (params, ret, effect) ->
+          AST.TArrow
+            (List.map canonicalize_std_extern_type_expr params, canonicalize_std_extern_type_expr ret, effect)
+      | AST.TUnion members -> AST.TUnion (List.map canonicalize_std_extern_type_expr members)
+      | AST.TIntersection members -> AST.TIntersection (List.map canonicalize_std_extern_type_expr members)
+      | AST.TRecord (fields, row) ->
+          AST.TRecord
+            ( List.map
+                (fun (field : AST.record_type_field) ->
+                  { field with field_type = canonicalize_std_extern_type_expr field.field_type })
+                fields,
+              Option.map canonicalize_std_extern_type_expr row )
+    in
+    let rewrite_extern_type_expr te =
+      rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings te
+      |> canonicalize_std_extern_type_expr
+    in
+    let rewrite_param (param : AST.extern_param) : AST.extern_param =
+      { param with extern_param_type = rewrite_extern_type_expr param.extern_param_type }
+    in
+    let rewrite_fn (fn_sig : AST.extern_fn_sig) : AST.extern_fn_sig =
+      {
+        fn_sig with
+        extern_fn_params = List.map rewrite_param fn_sig.extern_fn_params;
+        extern_fn_return_type = rewrite_extern_type_expr fn_sig.extern_fn_return_type;
+      }
+    in
+    { block with extern_fns = List.map rewrite_fn block.extern_fns }
+  in
+  let rec rewrite_statements ~at_top_level ~type_bindings value_scope stmts =
     match stmts with
     | [] -> Ok []
     | stmt :: rest ->
-        let* stmt', value_scope' = rewrite_statement ~at_top_level value_scope stmt in
-        let* rest' = rewrite_statements ~at_top_level value_scope' rest in
+        let* stmt', value_scope' = rewrite_statement ~at_top_level ~type_bindings value_scope stmt in
+        let* rest' = rewrite_statements ~at_top_level ~type_bindings value_scope' rest in
         Ok (stmt' :: rest')
-  and rewrite_statement ~at_top_level value_scope (stmt : AST.statement) :
+  and rewrite_statement ~at_top_level ~type_bindings value_scope (stmt : AST.statement) :
       (AST.statement * string StringMap.t, Diagnostic.t) result =
     let type_bindings_of_generic_params params =
       List.fold_left (fun acc (p : AST.generic_param) -> StringSet.add p.name acc) StringSet.empty params
     in
     match stmt.stmt with
     | AST.ExportDecl _ | AST.ImportDecl _ -> Ok (AST.{ stmt with stmt = Block [] }, value_scope)
+    | AST.ExternBlock block ->
+        let* () = validate_extern_qualifier stmt block in
+        Ok (AST.{ stmt with stmt = ExternBlock (rewrite_extern_block block) }, value_scope)
     | AST.Let { name; value; type_annotation } ->
         let rewritten_name =
           if String.equal name "_" || not at_top_level then
@@ -783,21 +927,19 @@ let rewrite_program
             declaration_internal_name name
         in
         let value_scope_for_value = bind_value value_scope ~name ~rewritten_name in
-        let* value = rewrite_expr ~value_scope:value_scope_for_value ~type_bindings:StringSet.empty value in
+        let* value = rewrite_expr ~value_scope:value_scope_for_value ~type_bindings value in
         let type_annotation =
-          Option.map
-            (rewrite_type_expr ~imports ~type_bindings:StringSet.empty ~available_bindings)
-            type_annotation
+          Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) type_annotation
         in
         Ok (AST.{ stmt with stmt = Let { name = rewritten_name; value; type_annotation } }, value_scope_for_value)
     | AST.Return expr ->
-        let* expr = rewrite_expr ~value_scope ~type_bindings:StringSet.empty expr in
+        let* expr = rewrite_expr ~value_scope ~type_bindings expr in
         Ok (AST.{ stmt with stmt = Return expr }, value_scope)
     | AST.ExpressionStmt expr ->
-        let* expr = rewrite_expr ~value_scope ~type_bindings:StringSet.empty expr in
+        let* expr = rewrite_expr ~value_scope ~type_bindings expr in
         Ok (AST.{ stmt with stmt = ExpressionStmt expr }, value_scope)
     | AST.Block stmts ->
-        let* stmts = rewrite_block value_scope stmts in
+        let* stmts = rewrite_block ~type_bindings value_scope stmts in
         Ok (AST.{ stmt with stmt = Block stmts }, value_scope)
     | AST.EnumDef { name; type_params; variants } ->
         let type_bindings = List.fold_left (fun acc name -> StringSet.add name acc) StringSet.empty type_params in
@@ -829,8 +971,9 @@ let rewrite_program
                        field_type = rewrite_type_expr ~imports ~type_bindings ~available_bindings field.field_type;
                      })
                    fields)
-          | AST.NamedTypeWrapper te ->
-              AST.NamedTypeWrapper (rewrite_type_expr ~imports ~type_bindings ~available_bindings te)
+          | AST.NamedTypeWrapper types ->
+              AST.NamedTypeWrapper
+                (List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) types)
         in
         Ok
           ( AST.
@@ -838,6 +981,11 @@ let rewrite_program
                 stmt with
                 stmt = TypeDef { type_name = declaration_internal_name type_name; type_type_params; type_body };
               },
+            value_scope )
+    | AST.ExternTypeDef { extern_type_name } ->
+        Ok
+          ( AST.
+              { stmt with stmt = ExternTypeDef { extern_type_name = declaration_internal_name extern_type_name } },
             value_scope )
     | AST.ShapeDef { shape_name; shape_type_params; shape_fields } ->
         let type_bindings =
@@ -860,11 +1008,14 @@ let rewrite_program
                   ShapeDef { shape_name = declaration_internal_name shape_name; shape_type_params; shape_fields };
               },
             value_scope )
-    | AST.TraitDef { name; type_param; supertraits; methods } ->
+    | AST.TraitDef { name; type_param; type_params; supertraits; methods } ->
+        let type_params =
+          match type_params with
+          | [] -> Option.to_list type_param
+          | _ -> type_params
+        in
         let type_bindings =
-          match type_param with
-          | Some param -> StringSet.singleton param
-          | None -> StringSet.empty
+          List.fold_left (fun acc param -> StringSet.add param acc) StringSet.empty type_params
         in
         let supertraits = rewrite_constraints ~imports ~type_bindings ~available_bindings supertraits in
         let* methods = map_result (rewrite_method_sig ~value_scope ~parent_type_bindings:type_bindings) methods in
@@ -872,10 +1023,12 @@ let rewrite_program
           ( AST.
               {
                 stmt with
-                stmt = TraitDef { name = declaration_internal_name name; type_param; supertraits; methods };
+                stmt =
+                  TraitDef
+                    { name = declaration_internal_name name; type_param; type_params; supertraits; methods };
               },
             value_scope )
-    | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } ->
+    | AST.ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_trait_args; impl_methods } ->
         let type_bindings = type_bindings_of_generic_params impl_type_params in
         let impl_type_params =
           List.map
@@ -898,11 +1051,20 @@ let rewrite_program
                   | _ -> impl_trait_name))
         in
         let impl_for_type = rewrite_type_expr ~imports ~type_bindings ~available_bindings impl_for_type in
+        let impl_trait_args =
+          match impl_trait_args with
+          | [] -> [ impl_for_type ]
+          | args -> List.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) args
+        in
         let* impl_methods =
           map_result (rewrite_method_impl ~value_scope ~parent_type_bindings:type_bindings) impl_methods
         in
         Ok
-          ( AST.{ stmt with stmt = ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_methods } },
+          ( AST.
+              {
+                stmt with
+                stmt = ImplDef { impl_type_params; impl_trait_name; impl_for_type; impl_trait_args; impl_methods };
+              },
             value_scope )
     | AST.InherentImplDef { inherent_for_type; inherent_methods } ->
         let target_generics = collect_inherent_target_generics inherent_for_type in
@@ -959,8 +1121,8 @@ let rewrite_program
                   TypeAlias { alias_name = declaration_internal_name alias_name; alias_type_params; alias_body };
               },
             value_scope )
-  and rewrite_block value_scope stmts =
-    let* stmts = rewrite_statements ~at_top_level:false value_scope stmts in
+  and rewrite_block ~type_bindings value_scope stmts =
+    let* stmts = rewrite_statements ~at_top_level:false ~type_bindings value_scope stmts in
     Ok
       (List.filter
          (fun (stmt : AST.statement) ->
@@ -1043,7 +1205,10 @@ let rewrite_program
         (rewrite_type_expr ~imports ~type_bindings:method_type_bindings ~available_bindings)
         method_impl.impl_method_return_type
     in
-    let* impl_method_body = rewrite_statement ~at_top_level:false body_scope method_impl.impl_method_body in
+    let* impl_method_body =
+      rewrite_statement ~at_top_level:false ~type_bindings:method_type_bindings body_scope
+        method_impl.impl_method_body
+    in
     let impl_method_body = fst impl_method_body in
     Ok { method_impl with impl_method_generics; impl_method_params; impl_method_return_type; impl_method_body }
   and rewrite_pattern (pat : AST.pattern) : AST.pattern =
@@ -1122,17 +1287,17 @@ let rewrite_program
         Ok AST.{ expr with expr = TypeCheck (inner, te) }
     | AST.If (cond, cons, alt) ->
         let* cond = rewrite_expr ~value_scope ~type_bindings cond in
-        let* cons = rewrite_statement ~at_top_level:false value_scope cons in
+        let* cons = rewrite_statement ~at_top_level:false ~type_bindings value_scope cons in
         let cons = fst cons in
         let* alt =
           match alt with
           | None -> Ok None
           | Some stmt ->
-              let* stmt = rewrite_statement ~at_top_level:false value_scope stmt in
+              let* stmt = rewrite_statement ~at_top_level:false ~type_bindings value_scope stmt in
               Ok (Some (fst stmt))
         in
         Ok AST.{ expr with expr = If (cond, cons, alt) }
-    | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
+    | AST.Function { origin; generics; params; return_type; effect; body } ->
         let type_bindings =
           match generics with
           | None -> type_bindings
@@ -1158,9 +1323,9 @@ let rewrite_program
         let return_type =
           Option.map (rewrite_type_expr ~imports ~type_bindings ~available_bindings) return_type
         in
-        let* body = rewrite_statement ~at_top_level:false value_scope body in
+        let* body = rewrite_statement ~at_top_level:false ~type_bindings value_scope body in
         let body = fst body in
-        Ok AST.{ expr with expr = Function { origin; generics; params; return_type; is_effectful; body } }
+        Ok AST.{ expr with expr = Function { origin; generics; params; return_type; effect; body } }
     | AST.Call (callee, args) ->
         let* callee = rewrite_expr ~value_scope ~type_bindings callee in
         let* args = map_result (rewrite_expr ~value_scope ~type_bindings) args in
@@ -1211,6 +1376,27 @@ let rewrite_program
             arms
         in
         Ok AST.{ expr with expr = Match (scrutinee, arms) }
+    | AST.Try { tried; wrap; fallback } ->
+        let* tried = rewrite_expr ~value_scope ~type_bindings tried in
+        let* fallback =
+          match fallback with
+          | None -> Ok None
+          | Some expr -> Result.map Option.some (rewrite_expr ~value_scope ~type_bindings expr)
+        in
+        let wrap =
+          Option.map
+            (fun (type_name, variant_name) ->
+              let type_name =
+                rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name
+              in
+              (type_name, variant_name))
+            wrap
+        in
+        Ok AST.{ expr with expr = Try { tried; wrap; fallback } }
+    | AST.Wrap { wrapped; target = type_name, variant_name } ->
+        let* wrapped = rewrite_expr ~value_scope ~type_bindings wrapped in
+        let type_name = rewrite_named_type_reference ~imports ~type_bindings ~available_bindings type_name in
+        Ok AST.{ expr with expr = Wrap { wrapped; target = (type_name, variant_name) } }
     | AST.RecordLit (fields, spread) ->
         let* fields =
           map_result
@@ -1301,10 +1487,10 @@ let rewrite_program
             in
             Ok AST.{ expr with expr = MethodCall { mc_receiver; mc_method; mc_type_args; mc_args } })
     | AST.BlockExpr stmts ->
-        let* stmts = rewrite_block value_scope stmts in
+        let* stmts = rewrite_block ~type_bindings value_scope stmts in
         Ok AST.{ expr with expr = BlockExpr stmts }
   in
-  rewrite_statements ~at_top_level:true StringMap.empty program
+  rewrite_statements ~at_top_level:true ~type_bindings:StringSet.empty StringMap.empty program
 
 let available_bindings_for_module ~(current_module : module_surface) ~(imports : resolved_imports) :
     member_presence StringMap.t =
@@ -1378,7 +1564,7 @@ let%test "toolchain std.option and std.result export canonical type names" =
 
 let%test "user modules implicitly see prelude traits and std option/result modules" =
   Discovery.with_temp_project
-    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(Option.unwrap_or(opt, 0))\n") ]
+    [ ("main.mr", "let opt: Option[Int] = Option.Some(41)\nputs(Option.value_or(opt, 0))\n") ]
     (fun root ->
       let entry_file = Filename.concat root "main.mr" in
       match Discovery.discover_project ~source_root:root ~entry_file () with
@@ -1412,6 +1598,9 @@ let%test "non-core stdlib modules implicitly see std option/result modules" =
           Discovery.write_file
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\n";
@@ -1492,6 +1681,61 @@ let%test "explicit imports may shadow implicit stdlib bindings" =
                       match StringMap.find_opt "Show" rewrite.resolved_imports.direct_bindings with
                       | Some presence -> String.equal presence.internal_name "geometry__Show"
                       | None -> false)))))
+
+let%test "extern signatures rewrite imported type annotations" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import types.Stringy\nextern \"strings\" = { fn ToUpper(s: Stringy) -> Stringy }\n");
+      ("types.mr", "export Stringy\ntype Stringy = Str\n");
+    ]
+    (fun root ->
+      let entry_file = Filename.concat root "main.mr" in
+      match Discovery.discover_project ~source_root:root ~entry_file () with
+      | Error _ -> false
+      | Ok graph -> (
+          match build_module_surfaces graph with
+          | Error _ -> false
+          | Ok surfaces -> (
+              match Hashtbl.find_opt graph.modules "main" with
+              | None -> false
+              | Some module_info -> (
+                  match rewrite_module ~surfaces module_info with
+                  | Error _ -> false
+                  | Ok rewrite ->
+                      List.exists
+                        (fun (stmt : AST.statement) ->
+                          match stmt.stmt with
+                          | AST.ExternBlock { extern_fns = [ fn_sig ]; _ } -> (
+                              match (fn_sig.extern_fn_params, fn_sig.extern_fn_return_type) with
+                              | [ { extern_param_type = AST.TCon param_type; _ } ], AST.TCon return_type ->
+                                  String.equal param_type "types__Stringy"
+                                  && String.equal return_type "types__Stringy"
+                              | _ -> false)
+                          | _ -> false)
+                        rewrite.program))))
+
+let%test "concrete wrapper shadows same-named extern export metadata" =
+  Discovery.with_temp_project
+    [
+      ("main.mr", "import api.foo\nputs(foo())\n");
+      ( "api.mr",
+        "export foo\nextern \"strings\" as shim = { fn foo(value: Str) -> Str }\nfn foo() -> Str = \"ok\"\n" );
+    ]
+    (fun root ->
+      let entry_file = Filename.concat root "main.mr" in
+      match Discovery.discover_project ~source_root:root ~entry_file () with
+      | Error _ -> false
+      | Ok graph -> (
+          match build_module_surfaces graph with
+          | Error _ -> false
+          | Ok surfaces -> (
+              match Hashtbl.find_opt surfaces "api" with
+              | None -> false
+              | Some surface -> (
+                  match StringMap.find_opt "foo" surface.exports with
+                  | None -> false
+                  | Some presence ->
+                      String.equal presence.internal_name "api__foo" && Option.is_none presence.extern_func_key))))
 
 let%test "headerless entry local Result shadows injected std.result in constructors and annotations" =
   Discovery.with_temp_project

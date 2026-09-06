@@ -10,22 +10,6 @@ struct RepoBinaryLaunch {
     marmoset_root: String,
 }
 
-fn parent_dir(path: &Path) -> Option<&Path> {
-    path.parent().filter(|parent| *parent != path)
-}
-
-fn ancestor_dirs(start_dir: &Path) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    let mut current = Some(start_dir);
-
-    while let Some(dir) = current {
-        dirs.push(dir.to_path_buf());
-        current = parent_dir(dir);
-    }
-
-    dirs
-}
-
 fn repo_binary_launch(repo_root: &Path) -> RepoBinaryLaunch {
     RepoBinaryLaunch {
         path: path_to_string(repo_root.join("marmoset")),
@@ -55,33 +39,37 @@ fn env_with_marmoset_root(env: &[(String, String)], marmoset_root: &str) -> Vec<
     merged
 }
 
-fn repo_dev_binary(
-    worktree_root: &Path,
-    shell_env: &[(String, String)],
-    mut is_launchable: impl FnMut(&str, &[(String, String)]) -> bool,
-) -> Option<RepoBinaryLaunch> {
-    for repo_root in ancestor_dirs(worktree_root) {
-        let candidate = repo_binary_launch(&repo_root);
-        let env = env_with_marmoset_root(shell_env, &candidate.marmoset_root);
-        if is_launchable(&candidate.path, &env) {
-            return Some(candidate);
+fn env_value<'a>(env: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    env.iter().find_map(|(env_name, value)| {
+        if env_name == name {
+            Some(value.as_str())
+        } else {
+            None
         }
-    }
-
-    None
+    })
 }
 
-// Zed runs this extension as wasm, so std::fs metadata checks do not reliably
-// reflect which host binaries are actually launchable.
-fn launchable_binary(path: &str, env: &[(String, String)]) -> bool {
-    let mut command = zed::process::Command::new(path)
-        .arg("--version")
-        .envs(env.iter().cloned());
+fn marmoset_root_from_env(env: &[(String, String)]) -> Option<PathBuf> {
+    env_value(env, "MARMOSET_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
 
-    match command.output() {
-        Ok(output) => output.status == Some(0),
-        Err(_) => false,
+fn marmoset_root_from_worktree_root(worktree_root: &str) -> Option<PathBuf> {
+    if worktree_root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(worktree_root))
     }
+}
+
+fn marmoset_root_launch(
+    shell_env: &[(String, String)],
+    worktree_root: &str,
+) -> Option<RepoBinaryLaunch> {
+    let repo_root = marmoset_root_from_env(shell_env)
+        .or_else(|| marmoset_root_from_worktree_root(worktree_root))?;
+    Some(repo_binary_launch(repo_root.as_path()))
 }
 
 fn path_to_string(path: PathBuf) -> String {
@@ -100,25 +88,19 @@ impl zed::Extension for MarmosetExtension {
     ) -> Result<zed::Command> {
         let shell_env = worktree.shell_env();
         let worktree_root = worktree.root_path();
-        let launch = repo_dev_binary(Path::new(&worktree_root), &shell_env, |path, env| {
-            launchable_binary(path, env)
-        });
-
-        let (command, env) = match launch {
-            Some(launch) => {
-                let env = env_with_marmoset_root(&shell_env, &launch.marmoset_root);
-                (launch.path, env)
-            }
+        let launch = match marmoset_root_launch(&shell_env, &worktree_root) {
+            Some(launch) => launch,
             None => {
-                let command = worktree.which("marmoset").ok_or_else(|| {
-                    "marmoset not found in PATH. Install it with: dune install".to_string()
-                })?;
-                (command, shell_env)
+                return Err(
+                    "Could not resolve Marmoset repo root; set MARMOSET_ROOT or open the Marmoset repo root in Zed"
+                        .to_string(),
+                )
             }
         };
+        let env = env_with_marmoset_root(&shell_env, &launch.marmoset_root);
 
         Ok(zed::Command {
-            command,
+            command: launch.path,
             args: vec!["lsp".into()],
             env,
         })
@@ -129,12 +111,10 @@ zed::register_extension!(MarmosetExtension);
 
 #[cfg(test)]
 mod tests {
-    use super::{env_with_marmoset_root, repo_binary_launch, repo_dev_binary, RepoBinaryLaunch};
+    use super::{
+        env_with_marmoset_root, marmoset_root_launch, repo_binary_launch, RepoBinaryLaunch,
+    };
     use std::path::PathBuf;
-
-    fn worktree_root() -> PathBuf {
-        PathBuf::from("/tmp/marmoset-dev/test/fixtures/modules")
-    }
 
     #[test]
     fn env_with_marmoset_root_appends_when_missing() {
@@ -166,18 +146,10 @@ mod tests {
     }
 
     #[test]
-    fn finds_repo_root_binary_from_nested_worktree_root() {
-        let worktree_root = worktree_root();
+    fn marmoset_root_env_uses_exact_configured_repo_binary() {
+        let shell_env = vec![("MARMOSET_ROOT".to_string(), "/tmp/marmoset-dev".to_string())];
         let repo_binary = "/tmp/marmoset-dev/marmoset".to_string();
-        let mut probed = Vec::new();
-
-        let selected = repo_dev_binary(worktree_root.as_path(), &[], |path, env| {
-            probed.push((path.to_string(), env.to_vec()));
-            path == repo_binary
-                && env
-                    .iter()
-                    .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")
-        });
+        let selected = marmoset_root_launch(&shell_env, "/tmp/marmoset-worktree");
 
         assert_eq!(
             selected,
@@ -186,61 +158,30 @@ mod tests {
                 marmoset_root: "/tmp/marmoset-dev".to_string(),
             })
         );
-        assert!(probed.iter().any(|(path, env)| path == &repo_binary
-            && env
-                .iter()
-                .any(|(name, value)| name == "MARMOSET_ROOT" && value == "/tmp/marmoset-dev")));
     }
 
     #[test]
-    fn prefers_nearest_ancestor_repo_binary() {
-        let worktree_root = worktree_root();
-        let mut probed = Vec::new();
+    fn missing_marmoset_root_uses_worktree_repo_binary() {
+        let shell_env = vec![("PATH".to_string(), "/tmp/marmoset-dev/marmoset".to_string())];
 
-        let selected = repo_dev_binary(worktree_root.as_path(), &[], |path, _env| {
-            probed.push(path.to_string());
-            path == "/tmp/marmoset-dev/test/marmoset"
-        });
+        let selected = marmoset_root_launch(&shell_env, "/tmp/marmoset-worktree");
 
         assert_eq!(
             selected,
             Some(RepoBinaryLaunch {
-                path: "/tmp/marmoset-dev/test/marmoset".to_string(),
-                marmoset_root: "/tmp/marmoset-dev/test".to_string(),
+                path: "/tmp/marmoset-worktree/marmoset".to_string(),
+                marmoset_root: "/tmp/marmoset-worktree".to_string(),
             })
-        );
-        assert_eq!(
-            probed,
-            vec![
-                "/tmp/marmoset-dev/test/fixtures/modules/marmoset".to_string(),
-                "/tmp/marmoset-dev/test/fixtures/marmoset".to_string(),
-                "/tmp/marmoset-dev/test/marmoset".to_string()
-            ]
         );
     }
 
     #[test]
-    fn returns_none_when_repo_binary_probe_rejects_all_ancestors() {
-        let worktree_root = worktree_root();
-        let mut probed = Vec::new();
+    fn empty_worktree_root_has_no_launcher_candidate() {
+        let shell_env = vec![("PATH".to_string(), "/tmp/marmoset-dev/marmoset".to_string())];
 
-        let selected = repo_dev_binary(worktree_root.as_path(), &[], |path, _env| {
-            probed.push(path.to_string());
-            false
-        });
+        let selected = marmoset_root_launch(&shell_env, "");
 
         assert_eq!(selected, None);
-        assert_eq!(
-            probed,
-            vec![
-                "/tmp/marmoset-dev/test/fixtures/modules/marmoset".to_string(),
-                "/tmp/marmoset-dev/test/fixtures/marmoset".to_string(),
-                "/tmp/marmoset-dev/test/marmoset".to_string(),
-                "/tmp/marmoset-dev/marmoset".to_string(),
-                "/tmp/marmoset".to_string(),
-                "/marmoset".to_string(),
-            ]
-        );
     }
 
     #[test]
@@ -251,27 +192,6 @@ mod tests {
                 path: "/tmp/marmoset-dev/marmoset".to_string(),
                 marmoset_root: "/tmp/marmoset-dev".to_string(),
             }
-        );
-    }
-
-    #[test]
-    fn does_not_depend_on_local_fs_visibility_for_repo_candidate() {
-        let worktree_root = PathBuf::from("/nonexistent/worktree/test/fixtures/modules");
-        let repo_binary = "/nonexistent/worktree/marmoset".to_string();
-
-        let selected = repo_dev_binary(worktree_root.as_path(), &[], |path, env| {
-            path == repo_binary
-                && env.iter().any(|(name, value)| {
-                    name == "MARMOSET_ROOT" && value == "/nonexistent/worktree"
-                })
-        });
-
-        assert_eq!(
-            selected,
-            Some(RepoBinaryLaunch {
-                path: repo_binary,
-                marmoset_root: "/nonexistent/worktree".to_string(),
-            })
         );
     }
 }

@@ -346,7 +346,7 @@ The toolchain also ships Marmoset stdlib modules. `std.prelude`, `std.option`, a
 ```marmoset
 let snack = Option.Some("banana")
 
-puts(Option.unwrap_or(snack, "none"))  # banana
+puts(Option.value_or(snack, "none"))   # banana
 puts(Show.show(42))                    # 42
 ```
 

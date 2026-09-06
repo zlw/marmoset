@@ -12,7 +12,7 @@ installed_root=""
 installed_install_error=""
 
 ensure_installed_toolchain() {
-    if [ -n "$installed_root" ] && [ -x "$installed_root/bin/marmoset" ]; then
+    if [ -n "$installed_root" ] && [ -d "$installed_root/share/marmoset/std" ]; then
         return 0
     fi
 
@@ -29,6 +29,10 @@ ensure_installed_toolchain() {
     rm -rf "$installed_root"
     installed_root=""
     return 1
+}
+
+installed_toolchain_root() {
+    printf '%s/share/marmoset' "$installed_root"
 }
 
 cleanup() {
@@ -60,16 +64,71 @@ fi
 rm -f "$tmpfile"
 
 TOTAL=$((TOTAL + 1))
-echo -n "TEST [$TOTAL] installed check: locates bundled stdlib ... "
+echo -n "TEST [$TOTAL] dune install: does not install CLI binary ... "
+if ensure_installed_toolchain && [ ! -e "$installed_root/bin/marmoset" ]; then
+    echo "✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "✗ FAIL (installed binary unexpectedly present at $installed_root/bin/marmoset)"
+    FAIL=$((FAIL + 1))
+fi
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] installed resources: check locates bundled stdlib ... "
 tmpdir=$(mktemp -d)
 tmpfile="$tmpdir/main.mr"
 echo 'let x = 42;' > "$tmpfile"
-if ensure_installed_toolchain && output=$(env -u MARMOSET_ROOT "$installed_root/bin/marmoset" check "$tmpfile" 2>&1) \
+if ensure_installed_toolchain && output=$(MARMOSET_ROOT="$(installed_toolchain_root)" "$EXECUTABLE" check "$tmpfile" 2>&1) \
     && echo "$output" | grep -q "OK"; then
     echo "✓ PASS"
     PASS=$((PASS + 1))
 else
     echo "✗ FAIL (output: $output)"
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] installed resources: build locates bundled std shim runtime ... "
+tmpdir=$(mktemp -d)
+tmpfile="$tmpdir/main.mr"
+binpath="$tmpdir/main"
+cp "$REPO_ROOT/.tool-versions" "$tmpdir/.tool-versions"
+cat > "$tmpfile" <<'EOF'
+import std.bytes
+puts(bytes.to_str_lossy(bytes.from_str("installed")))
+EOF
+if ensure_installed_toolchain \
+    && build_output=$(cd "$tmpdir" && MARMOSET_ROOT="$(installed_toolchain_root)" "$EXECUTABLE" build "$tmpfile" -o "$binpath" 2>&1) \
+    && output=$("$binpath" 2>&1) \
+    && [ "$output" = "installed" ]; then
+    echo "✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "✗ FAIL (build: ${build_output:-}, output: ${output:-})"
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$tmpdir"
+
+TOTAL=$((TOTAL + 1))
+echo -n "TEST [$TOTAL] installed resources: test shim root is rejected ... "
+tmpdir=$(mktemp -d)
+cp "$REPO_ROOT/.tool-versions" "$tmpdir/.tool-versions"
+cat > "$tmpdir/main.mr" <<'EOF'
+extern "test/scalar" = {
+  fn upcase(s: Str) -> Str
+}
+scalar.upcase("x")
+EOF
+if ensure_installed_toolchain \
+    && build_output=$(cd "$tmpdir" && MARMOSET_ROOT="$(installed_toolchain_root)" "$EXECUTABLE" build "$tmpdir/main.mr" -o "$tmpdir/main" 2>&1); then
+    echo "✗ FAIL (expected build failure)"
+    FAIL=$((FAIL + 1))
+elif echo "${build_output:-}" | grep -qF 'allowed root is std'; then
+    echo "✓ PASS"
+    PASS=$((PASS + 1))
+else
+    echo "✗ FAIL (output: ${build_output:-})"
     FAIL=$((FAIL + 1))
 fi
 rm -rf "$tmpdir"
@@ -168,7 +227,7 @@ init_len=${#init_body}
 initialized_len=${#initialized_body}
 shutdown_len=${#shutdown_body}
 exit_len=${#exit_body}
-echo -n "TEST [$TOTAL] installed lsp: opens .mr files without stdlib errors ... "
+echo -n "TEST [$TOTAL] installed resources lsp: opens .mr files without stdlib errors ... "
 lsp_output=$(mktemp)
 tmpdir=$(mktemp -d)
 tmpfile="$tmpdir/main.mr"
@@ -179,7 +238,7 @@ did_open_len=${#did_open_body}
 if ensure_installed_toolchain; then
     printf "Content-Length: %d\r\n\r\n%sContent-Length: %d\r\n\r\n%sContent-Length: %d\r\n\r\n%sContent-Length: %d\r\n\r\n%sContent-Length: %d\r\n\r\n%s" \
       "$init_len" "$init_body" "$initialized_len" "$initialized_body" "$did_open_len" "$did_open_body" "$shutdown_len" "$shutdown_body" "$exit_len" "$exit_body" | \
-      env -u MARMOSET_ROOT "$installed_root/bin/marmoset" lsp > "$lsp_output" 2>/dev/null &
+      MARMOSET_ROOT="$(installed_toolchain_root)" "$EXECUTABLE" lsp > "$lsp_output" 2>/dev/null &
     lsp_pid=$!
     sleep 2
     kill "$lsp_pid" 2>/dev/null || true

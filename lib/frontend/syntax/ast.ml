@@ -7,7 +7,7 @@ module AST = struct
     | TCon of string (* 'Int', 'Str', 'List', 'Map', 'Option' *)
     | TApp of string * type_expr list (* List[Int], Map[Str, Int], Option[a] *)
     | TTraitObject of string list (* Dyn[Show], Dyn[Show & Eq] *)
-    | TArrow of type_expr list * type_expr * bool (* (Int, Str) -> Bool; bool = is_effectful *)
+    | TArrow of type_expr list * type_expr * effect_annotation (* (Int, Str) -> Bool / => / ~> *)
     | TUnion of type_expr list (* Int | Str | Bool *)
     | TIntersection of type_expr list (* Int & Named; Dyn[Show] & Dyn[Eq] *)
     | TRecord of record_type_field list * type_expr option
@@ -25,6 +25,7 @@ module AST = struct
   and variant_def = {
     variant_name : string;
     variant_fields : type_expr list;
+    variant_message : string option;
   }
   [@@deriving show]
 
@@ -36,7 +37,7 @@ module AST = struct
 
   and named_type_body =
     | NamedTypeProduct of record_type_field list
-    | NamedTypeWrapper of type_expr
+    | NamedTypeWrapper of type_expr list
   [@@deriving show]
 
   and named_type_def = {
@@ -45,6 +46,8 @@ module AST = struct
     type_body : named_type_body;
   }
   [@@deriving show]
+
+  and extern_type_def = { extern_type_name : string } [@@deriving show]
 
   and shape_def = {
     shape_name : string;
@@ -57,6 +60,7 @@ module AST = struct
   and trait_def = {
     name : string;
     type_param : string option; (* The 'a' in trait Show[a], or None for non-generic traits *)
+    type_params : string list; (* All trait type parameters; first one is the dispatch receiver *)
     supertraits : string list; (* trait Ord[a]: Eq & Hash *)
     methods : method_sig list;
   }
@@ -64,6 +68,7 @@ module AST = struct
   and effect_annotation =
     | Pure
     | Effectful
+    | EffectPoly
   [@@deriving show]
 
   and method_sig = {
@@ -81,6 +86,7 @@ module AST = struct
     impl_type_params : generic_param list; (* impl[a: Eq] Show[List[a]] = { ... } *)
     impl_trait_name : string;
     impl_for_type : type_expr;
+    impl_trait_args : type_expr list; (* Full trait application args; first equals impl_for_type *)
     impl_methods : method_impl list;
   }
 
@@ -113,6 +119,28 @@ module AST = struct
   }
   [@@deriving show]
 
+  and extern_block_def = {
+    extern_shim_id : string;
+    extern_alias : string option;
+    extern_qualifier : string;
+    extern_fns : extern_fn_sig list;
+  }
+
+  and extern_fn_sig = {
+    extern_fn_name : string;
+    extern_fn_params : extern_param list;
+    extern_fn_return_type : type_expr;
+    extern_fn_effectful : bool;
+    extern_fn_pos : int;
+    extern_fn_end_pos : int;
+  }
+
+  and extern_param = {
+    extern_param_name : string;
+    extern_param_type : type_expr;
+  }
+  [@@deriving show]
+
   and statement = {
     stmt : stmt_kind;
     pos : int;
@@ -140,12 +168,14 @@ module AST = struct
         variants : variant_def list;
       }
     | TypeDef of named_type_def
+    | ExternTypeDef of extern_type_def
     | ShapeDef of shape_def
     | TraitDef of trait_def (* Phase 4.3: trait Show[a] = { ... } *)
     | ImplDef of impl_def (* Phase 4.3: impl Show[Int] = { ... } *)
     | InherentImplDef of inherent_impl_def (* Phase 4.5: impl Point = { ... } *)
     | DeriveDef of derive_def (* canonical internal derive form *)
     | TypeAlias of type_alias_def (* transparent alias declaration *)
+    | ExternBlock of extern_block_def
   [@@deriving show]
 
   (* Phase 4.4: Transparent type definition *)
@@ -189,13 +219,22 @@ module AST = struct
         generics : generic_param list option; (* [a], [a: show], etc. *)
         params : (string * type_expr option) list; (* parameter names and optional type annotations *)
         return_type : type_expr option; (* return type annotation *)
-        is_effectful : bool; (* true when => is used instead of -> *)
+        effect : effect_annotation; (* ->, =>, or ~> *)
         body : statement;
       }
     | Call of expression * expression list
     | EnumConstructor of string * string * expression list
     (* enum_name, variant_name, arguments; e.g., Option.Some(42) *)
     | Match of expression * match_arm list (* match scrutinee { arm1, arm2, ... } *)
+    | Try of {
+        tried : expression;
+        wrap : (string * string) option;
+        fallback : expression option;
+      }
+    | Wrap of {
+        wrapped : expression;
+        target : string * string;
+      }
     | RecordLit of record_field list * expression option (* { x: 1, y: 2, ...base } - fields + optional spread *)
     | FieldAccess of expression * string (* expr.field_name *)
     | MethodCall of {
@@ -293,6 +332,8 @@ module AST = struct
     | Function f1, Function f2 -> List.length f1.params = List.length f2.params && stmt_equal f1.body f2.body
     | Call (f1, a1), Call (f2, a2) ->
         expr_equal f1 f2 && List.length a1 = List.length a2 && List.for_all2 expr_equal a1 a2
+    | Try t1, Try t2 -> t1.wrap = t2.wrap && expr_equal t1.tried t2.tried
+    | Wrap w1, Wrap w2 -> w1.target = w2.target && expr_equal w1.wrapped w2.wrapped
     | BlockExpr ss1, BlockExpr ss2 -> List.length ss1 = List.length ss2 && List.for_all2 stmt_equal ss1 ss2
     | _ -> false
 
@@ -326,6 +367,8 @@ module AST = struct
     | Call _ -> "Call"
     | EnumConstructor _ -> "EnumConstructor"
     | Match _ -> "Match"
+    | Try _ -> "Try"
+    | Wrap _ -> "Wrap"
     | RecordLit _ -> "RecordLit"
     | FieldAccess _ -> "FieldAccess"
     | MethodCall _ -> "MethodCall"
@@ -340,6 +383,9 @@ module AST = struct
           match import_alias with
           | None -> base
           | Some alias -> base ^ " as " ^ alias)
+      | ExternBlock block ->
+          Printf.sprintf "extern %S as %s = { ... }" block.extern_shim_id block.extern_qualifier
+      | ExternTypeDef { extern_type_name } -> Printf.sprintf "extern type %s" extern_type_name
       | Let l -> Printf.sprintf "let %s = %s;" l.name (expression_to_string l.value)
       | Return expr -> Printf.sprintf "return %s;" (expression_to_string expr)
       | ExpressionStmt expr -> expression_to_string expr
@@ -362,7 +408,7 @@ module AST = struct
           let body_str =
             match type_body with
             | NamedTypeProduct _ -> "{ ... }"
-            | NamedTypeWrapper inner -> show_type_expr inner
+            | NamedTypeWrapper inners -> String.concat ", " (List.map show_type_expr inners)
           in
           Printf.sprintf "type %s%s = %s" type_name params_str body_str
       | ShapeDef { shape_name; shape_type_params; _ } ->
@@ -373,15 +419,24 @@ module AST = struct
               "[" ^ String.concat ", " shape_type_params ^ "]"
           in
           Printf.sprintf "shape %s%s = { ... }" shape_name params_str
-      | TraitDef { name; type_param; _ } ->
+      | TraitDef { name; type_param; type_params; _ } ->
           let params =
-            match type_param with
-            | None -> ""
-            | Some p -> Printf.sprintf "[%s]" p
+            match type_params with
+            | [] -> (
+                match type_param with
+                | None -> ""
+                | Some p -> Printf.sprintf "[%s]" p)
+            | params -> Printf.sprintf "[%s]" (String.concat ", " params)
           in
           Printf.sprintf "trait %s%s { ... }" name params
-      | ImplDef { impl_trait_name; impl_for_type; _ } ->
-          Printf.sprintf "impl %s[%s] = { ... }" impl_trait_name (show_type_expr impl_for_type)
+      | ImplDef { impl_trait_name; impl_for_type; impl_trait_args; _ } ->
+          let args =
+            match impl_trait_args with
+            | [] -> [ impl_for_type ]
+            | args -> args
+          in
+          Printf.sprintf "impl %s[%s] = { ... }" impl_trait_name
+            (String.concat ", " (List.map show_type_expr args))
       | InherentImplDef { inherent_for_type; _ } ->
           Printf.sprintf "impl %s = { ... }" (show_type_expr inherent_for_type)
       | DeriveDef { derive_traits; derive_for_type } ->
@@ -426,11 +481,25 @@ module AST = struct
             (match alt with
             | Some a -> Printf.sprintf " else %s" (block_to_string a)
             | None -> "")
-      | Function f -> function_to_string f.params f.is_effectful f.body
+      | Function f -> function_to_string f.params f.effect f.body
       | Call (expr, args) -> Printf.sprintf "%s(%s)" (expression_to_string expr) (args_to_string args)
       | EnumConstructor (enum_name, variant_name, args) ->
           Printf.sprintf "%s.%s(%s)" enum_name variant_name (args_to_string args)
       | Match (scrutinee, _arms) -> Printf.sprintf "match %s { ... }" (expression_to_string scrutinee)
+      | Try { tried; wrap; fallback } ->
+          let wrap_str =
+            match wrap with
+            | None -> ""
+            | Some (type_name, variant_name) -> Printf.sprintf " wrap %s.%s" type_name variant_name
+          in
+          let fallback_str =
+            match fallback with
+            | None -> ""
+            | Some expr -> Printf.sprintf " or %s" (expression_to_string expr)
+          in
+          Printf.sprintf "try %s%s%s" (expression_to_string tried) wrap_str fallback_str
+      | Wrap { wrapped; target = type_name, variant_name } ->
+          Printf.sprintf "%s wrap %s.%s" (expression_to_string wrapped) type_name variant_name
       | RecordLit (fields, spread) ->
           let fields_str =
             fields
@@ -457,16 +526,14 @@ module AST = struct
             (args_to_string mc_args)
       | BlockExpr stmts -> Printf.sprintf "{ %s }" (List.map statement_to_string stmts |> String.concat " ")
     and block_to_string (block : statement) : string = statement_to_string block
-    and function_to_string (params : (string * type_expr option) list) (is_effectful : bool) (body : statement) :
-        string =
+    and arrow_of_effect = function
+      | Pure -> "->"
+      | Effectful -> "=>"
+      | EffectPoly -> "~>"
+    and function_to_string
+        (params : (string * type_expr option) list) (effect : effect_annotation) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
-      let arrow =
-        if is_effectful then
-          "=>"
-        else
-          "->"
-      in
-      Printf.sprintf "(%s) %s %s" param_str arrow (block_to_string body)
+      Printf.sprintf "(%s) %s %s" param_str (arrow_of_effect effect) (block_to_string body)
     and args_to_string (args : expression list) : string =
       List.map expression_to_string args |> String.concat ", "
     in

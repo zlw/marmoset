@@ -1,0 +1,3 @@
+# VN128: Placeholder shorthand infers standalone effectful sections
+let printer = puts(_)
+printer(1)  # output: 1

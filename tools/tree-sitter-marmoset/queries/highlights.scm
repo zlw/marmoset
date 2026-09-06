@@ -8,6 +8,9 @@
 "else" @keyword.conditional
 "match" @keyword.conditional
 "case" @keyword.conditional
+"try" @keyword
+"wrap" @keyword
+"or" @keyword
 "fn" @keyword.function
 "enum" @keyword.type
 "shape" @keyword.type
@@ -16,6 +19,7 @@
 "derive" @keyword.type
 "override" @keyword.modifier
 "type" @keyword.type
+"extern" @keyword.type
 "is" @keyword.operator
 
 ; Literals
@@ -45,6 +49,7 @@
 "=" @operator
 "->" @operator
 "=>" @operator
+"~>" @operator
 "|>" @operator
 "|" @operator
 "&" @operator
@@ -76,6 +81,8 @@
 (shape_definition "}" @punctuation.bracket)
 (impl_block "{" @punctuation.bracket)
 (impl_block "}" @punctuation.bracket)
+(extern_block "{" @punctuation.bracket)
+(extern_block "}" @punctuation.bracket)
 (match_expression "{" @punctuation.bracket)
 (match_expression "}" @punctuation.bracket)
 
@@ -92,6 +99,10 @@
 
 (generic_type
   name: (type_identifier) @type.builtin)
+
+(qualified_type
+  module: (identifier) @namespace
+  name: (identifier) @type)
 
 ; Module imports
 (import_statement
@@ -181,6 +192,15 @@
 (enum_variant
   name: (identifier) @constructor)
 
+(simple_wrap_target
+  type: (identifier) @type
+  variant: (identifier) @constructor)
+
+(qualified_wrap_target
+  module: (identifier) @namespace
+  type: (identifier) @type
+  variant: (identifier) @constructor)
+
 (wrapper_type
   constructor: (identifier) @constructor)
 
@@ -213,6 +233,19 @@
 ; Type definitions
 (type_definition
   name: (identifier) @type)
+
+(extern_type_definition
+  name: (identifier) @type)
+
+(extern_block
+  alias: (identifier) @namespace)
+
+(extern_fn_signature
+  name: (identifier) @function)
+
+(extern_fn_signature
+  (extern_parameter
+    name: (identifier) @variable.parameter))
 
 ; Type parameters
 (type_parameter_list

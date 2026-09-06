@@ -78,6 +78,18 @@ let document_symbols ~(source : string) ~(program : Ast.AST.program) : Lsp_t.Doc
           Some (symbol ~name ~kind:Lsp_t.SymbolKind.Class ~range:(range_of_stmt stmt) ~children ())
       | Ast.AST.TypeAlias { alias_name; _ } ->
           Some (symbol ~name:alias_name ~kind:Lsp_t.SymbolKind.Struct ~range:(range_of_stmt stmt) ())
+      | Ast.AST.ExternTypeDef { extern_type_name } ->
+          Some (symbol ~name:extern_type_name ~kind:Lsp_t.SymbolKind.Interface ~range:(range_of_stmt stmt) ())
+      | Ast.AST.ExternBlock { extern_qualifier; extern_fns; _ } ->
+          let children =
+            List.map
+              (fun (fn_sig : Ast.AST.extern_fn_sig) ->
+                symbol ~name:fn_sig.extern_fn_name ~kind:Lsp_t.SymbolKind.Function ~range:(range_of_stmt stmt) ())
+              extern_fns
+          in
+          Some
+            (symbol ~name:extern_qualifier ~kind:Lsp_t.SymbolKind.Namespace ~range:(range_of_stmt stmt) ~children
+               ())
       | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
       | Ast.AST.DeriveDef _ | Ast.AST.ExpressionStmt _ | Ast.AST.Return _ | Ast.AST.Block _ -> None)
     program
@@ -164,4 +176,29 @@ let%test "inherent impl is included in document symbols" =
   let symbols = get_symbols "impl Int = { fn double(x: Int) -> Int = x * 2 }" in
   match symbols with
   | [ s ] -> s.name = "impl Int" && s.kind = Lsp_t.SymbolKind.Class
+  | _ -> false
+
+let%test "extern type produces Interface symbol" =
+  let symbols = get_symbols "extern type File" in
+  match symbols with
+  | [ s ] -> s.name = "File" && s.kind = Lsp_t.SymbolKind.Interface
+  | _ -> false
+
+let%test "extern block produces namespace symbol with function children" =
+  let symbols =
+    get_symbols
+      "extern \"std/file\" as file_shim = {\n  fn read(path: Str) -> Bytes\n  fn write!(path: Str, bytes: Bytes) => Unit\n}"
+  in
+  match symbols with
+  | [ s ] -> (
+      s.name = "file_shim"
+      && s.kind = Lsp_t.SymbolKind.Namespace
+      &&
+      match s.children with
+      | Some [ read; write ] ->
+          read.name = "read"
+          && read.kind = Lsp_t.SymbolKind.Function
+          && write.name = "write!"
+          && write.kind = Lsp_t.SymbolKind.Function
+      | _ -> false)
   | _ -> false

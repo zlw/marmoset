@@ -1,0 +1,13 @@
+# R026: top-level try wrap adapts the printed error type while preserving success
+type InnerError = {
+  Missing = "Missing",
+}
+
+type OuterError = {
+  Inner(InnerError) = "Outer failure",
+}
+
+fn ok() -> Result[Int, InnerError] = Result.Success(41)
+
+let value = try ok() wrap OuterError.Inner
+puts(value + 1)  # output: 42

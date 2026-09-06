@@ -51,6 +51,7 @@ let push_hover_item (items : declaration_hover_item list ref) ~start_pos ~end_po
     items := { start_pos; end_pos; text } :: !items
 
 let token_end_pos (tok : Token.token) : int = max tok.pos (tok.pos + String.length tok.literal - 1)
+let string_token_end_pos (tok : Token.token) : int = tok.pos + String.length tok.literal + 1
 
 let source_between_tokens ~(source : string) (start_tok : Token.token) (end_tok : Token.token) : string =
   let start_pos = start_tok.pos in
@@ -150,7 +151,11 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
           done;
           if !idx < len && tokens.(!idx).token_type = Token.RParen then
             incr idx;
-          (if !idx < len && (tokens.(!idx).token_type = Token.Arrow || tokens.(!idx).token_type = Token.FatArrow)
+          (if
+             !idx < len
+             && (tokens.(!idx).token_type = Token.Arrow
+                || tokens.(!idx).token_type = Token.FatArrow
+                || tokens.(!idx).token_type = Token.TildeArrow)
            then
              let arrow_token = tokens.(!idx) in
              let ret_start = !idx + 1 in
@@ -164,10 +169,10 @@ let parse_fn_header_hover_items ~(source : string) (tokens : Token.token array) 
                push_hover_item items ~start_pos:tokens.(ret_start).pos ~end_pos:(token_end_pos ret_end)
                  ~text:return_text;
                let arrow_text =
-                 if arrow_token.token_type = Token.FatArrow then
-                   " => "
-                 else
-                   " -> "
+                 match arrow_token.token_type with
+                 | Token.FatArrow -> " => "
+                 | Token.TildeArrow -> " ~> "
+                 | _ -> " -> "
                in
                let params_text = "(" ^ String.concat ", " (List.rev !param_type_texts) ^ ")" in
                push_hover_item items ~start_pos:name_tok.pos ~end_pos:(token_end_pos name_tok)
@@ -181,7 +186,8 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
   let idx = ref (kw_idx + 1) in
   if !idx >= len || tokens.(!idx).token_type <> Token.Ident then
     []
-  else (
+  else
+    let type_name = tokens.(!idx).literal in
     incr idx;
     if !idx < len && tokens.(!idx).token_type = Token.LBracket then
       idx := skip_balanced_group tokens !idx ~open_:Token.LBracket ~close_:Token.RBracket;
@@ -210,25 +216,73 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
               push_hover_item items ~start_pos:field_tok.pos ~end_pos:(token_end_pos annot_end)
                 ~text:(field_tok.literal ^ ": " ^ type_text);
               idx := stop_idx)
+        | Token.Ident ->
+            let variant_tok = tokens.(!idx) in
+            let after_payload, payload_text =
+              if !idx + 1 < len && tokens.(!idx + 1).token_type = Token.LParen then
+                let payload_start = !idx + 2 in
+                let payload_stop =
+                  skip_balanced_group tokens (!idx + 1) ~open_:Token.LParen ~close_:Token.RParen
+                in
+                let payload_text =
+                  if payload_start <= payload_stop - 2 then
+                    source_between_tokens ~source tokens.(payload_start) tokens.(payload_stop - 2)
+                  else
+                    ""
+                in
+                (payload_stop, payload_text)
+              else
+                (!idx + 1, "")
+            in
+            let after_message, message_tok =
+              if
+                after_payload + 1 < len
+                && tokens.(after_payload).token_type = Token.Assign
+                && tokens.(after_payload + 1).token_type = Token.String
+              then
+                (after_payload + 2, Some tokens.(after_payload + 1))
+              else
+                (after_payload, None)
+            in
+            let payload_suffix =
+              if payload_text = "" then
+                ""
+              else
+                "(" ^ payload_text ^ ")"
+            in
+            let variant_label =
+              Printf.sprintf "%s.%s%s: %s" type_name variant_tok.literal payload_suffix type_name
+            in
+            let variant_text =
+              match message_tok with
+              | None -> variant_label
+              | Some tok -> Printf.sprintf "%s\nmessage: %S" variant_label tok.literal
+            in
+            push_hover_item items ~start_pos:variant_tok.pos ~end_pos:(token_end_pos variant_tok)
+              ~text:variant_text;
+            (match message_tok with
+            | None -> ()
+            | Some tok ->
+                push_hover_item items ~start_pos:tok.pos ~end_pos:(string_token_end_pos tok)
+                  ~text:
+                    (Printf.sprintf "%S: canonical message for %s.%s" tok.literal type_name variant_tok.literal));
+            idx := after_message
         | Token.Comma -> incr idx
         | _ -> incr idx
       done;
-      List.rev !items))
+      List.rev !items)
 
 let find_declaration_header_hover ~(source : string) ~(offset : int) : declaration_hover_item option =
-  match identifier_range_at_offset ~source ~offset with
-  | None -> None
-  | Some _ ->
-      let tokens = Array.of_list (Lexer.lex source) in
-      let items = ref [] in
-      Array.iteri
-        (fun idx (tok : Token.token) ->
-          match tok.token_type with
-          | Token.Function -> items := !items @ parse_fn_header_hover_items ~source tokens idx
-          | Token.Shape | Token.Type -> items := !items @ parse_record_field_hover_items ~source tokens idx
-          | _ -> ())
-        tokens;
-      List.find_opt (fun item -> offset >= item.start_pos && offset <= item.end_pos) !items
+  let tokens = Array.of_list (Lexer.lex source) in
+  let items = ref [] in
+  Array.iteri
+    (fun idx (tok : Token.token) ->
+      match tok.token_type with
+      | Token.Function -> items := !items @ parse_fn_header_hover_items ~source tokens idx
+      | Token.Shape | Token.Type -> items := !items @ parse_record_field_hover_items ~source tokens idx
+      | _ -> ())
+    tokens;
+  List.find_opt (fun item -> offset >= item.start_pos && offset <= item.end_pos) !items
 
 let starts_with_at ~(source : string) ~(pos : int) ~(prefix : string) : bool =
   let prefix_len = String.length prefix in
@@ -326,6 +380,9 @@ let rec find_expr_at (offset : int) (expr : Ast.AST.expression) : Ast.AST.expres
                fields)
             (Option.bind spread (find_expr_at offset))
       | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_expr_at offset) args
+      | Ast.AST.Try { tried; fallback; _ } ->
+          first_some (find_expr_at offset tried) (Option.bind fallback (find_expr_at offset))
+      | Ast.AST.Wrap { wrapped; _ } -> find_expr_at offset wrapped
       | Ast.AST.TypeCheck (e, _) -> find_expr_at offset e
       | Ast.AST.BlockExpr stmts -> List.find_map (find_expr_in_stmt offset) stmts
       | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
@@ -386,7 +443,9 @@ and find_expr_in_stmt (offset : int) (stmt : Ast.AST.statement) : Ast.AST.expres
         (fun (m : Ast.AST.method_sig) -> Option.bind m.method_default_impl (find_expr_at offset))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+      None
 
 (* Find an expression at a given offset across the entire program *)
 let find_in_program (offset : int) (program : Ast.AST.program) : Ast.AST.expression option =
@@ -419,7 +478,9 @@ let rec find_let_binding_in_stmt ~(source : string) ~(offset : int) (stmt : Ast.
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
   | Ast.AST.ExpressionStmt e -> find_let_binding_in_expr ~source ~offset e
   | Ast.AST.Return e -> find_let_binding_in_expr ~source ~offset e
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+      None
 
 and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.expression) :
     (string * Ast.AST.expression * int * int) option =
@@ -463,6 +524,11 @@ and find_let_binding_in_expr ~(source : string) ~(offset : int) (expr : Ast.AST.
            fields)
         (Option.bind spread (find_let_binding_in_expr ~source ~offset))
   | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_let_binding_in_expr ~source ~offset) args
+  | Ast.AST.Try { tried; fallback; _ } ->
+      first_some
+        (find_let_binding_in_expr ~source ~offset tried)
+        (Option.bind fallback (find_let_binding_in_expr ~source ~offset))
+  | Ast.AST.Wrap { wrapped; _ } -> find_let_binding_in_expr ~source ~offset wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_let_binding_in_stmt ~source ~offset) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
@@ -525,6 +591,11 @@ let rec find_pattern_in_expr ~(offset : int) ~(type_map : Infer.type_map) (expr 
            fields)
         (Option.bind spread (find_pattern_in_expr ~offset ~type_map))
   | Ast.AST.EnumConstructor (_, _, args) -> List.find_map (find_pattern_in_expr ~offset ~type_map) args
+  | Ast.AST.Try { tried; fallback; _ } ->
+      first_some
+        (find_pattern_in_expr ~offset ~type_map tried)
+        (Option.bind fallback (find_pattern_in_expr ~offset ~type_map))
+  | Ast.AST.Wrap { wrapped; _ } -> find_pattern_in_expr ~offset ~type_map wrapped
   | Ast.AST.BlockExpr stmts -> List.find_map (find_pattern_in_stmt ~offset ~type_map) stmts
   | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> None
 
@@ -549,7 +620,9 @@ and find_pattern_in_stmt ~(offset : int) ~(type_map : Infer.type_map) (stmt : As
           Option.bind m.method_default_impl (find_pattern_in_expr ~offset ~type_map))
         methods
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> None
-  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ -> None
+  | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.DeriveDef _
+  | Ast.AST.TypeAlias _ | Ast.AST.ExternBlock _ ->
+      None
 
 let find_pattern_in_program ~(offset : int) ~(type_map : Infer.type_map) (program : Ast.AST.program) :
     (Ast.AST.pattern * Types.mono_type) option =
@@ -829,6 +902,12 @@ let%test "hover on top-level fn declaration name shows named function type and h
       && h.highlighted = "print_book_name"
   | _, None -> false
 
+let%test "hover on effect-polymorphic fn declaration name shows tilde arrow" =
+  match hover_marked "fn |apply(f: (Int) ~> Int, x: Int) ~> Int = f(x)" with
+  | _, Some h ->
+      string_contains h.type_text "apply:" && string_contains h.type_text "~> Int" && h.highlighted = "apply"
+  | _, None -> false
+
 let%test "hover on top-level fn param highlights only the param name" =
   match hover_marked "fn print_book_name(|book: Map[Str, Str]) => Unit = {\n  puts(book[\"title\"])\n}" with
   | _, Some h -> string_contains h.type_text "book: Map[Str, Str]" && h.highlighted = "book"
@@ -1104,6 +1183,28 @@ let%test "hover on record pattern punning shows bound field type" =
       "fn greet(m: { name: Str, bananas_eaten: Int }) -> Str = match m {\n  case { |name:, ...rest }: name\n}"
   with
   | _, Some h -> string_contains h.type_text "name: Str" && h.highlighted = "name"
+  | _ -> false
+
+let%test "hover on error variant declaration includes canonical message" =
+  match
+    hover_marked
+      "type FileError = {\n  |NotFound = \"File not found\",\n  InvalidData(Str) = \"File contains invalid data\",\n}\n"
+  with
+  | _, Some h ->
+      string_contains h.type_text "FileError.NotFound: FileError"
+      && string_contains h.type_text "File not found"
+      && h.highlighted = "NotFound"
+  | _ -> false
+
+let%test "hover on error variant message string names canonical message" =
+  match
+    hover_marked
+      "type FileError = {\n  NotFound = |\"File not found\",\n  InvalidData(Str) = \"File contains invalid data\",\n}\n"
+  with
+  | _, Some h ->
+      string_contains h.type_text "canonical message"
+      && string_contains h.type_text "FileError.NotFound"
+      && h.highlighted = "\"File not found\""
   | _ -> false
 
 let%test "hover formats list types with vnext casing" =

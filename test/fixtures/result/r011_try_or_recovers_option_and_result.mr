@@ -1,0 +1,28 @@
+# R011: try or recovers Option.None and Result.Failure to fallback values
+type ParseError = {
+  Bad = "Bad parse",
+}
+
+fn maybe(ok: Bool) -> Option[Int] = if (ok) {
+  Option.Some(42)
+} else {
+  Option.None
+}
+
+fn parse(ok: Bool) -> Result[Int, ParseError] = if (ok) {
+  Result.Success(7)
+} else {
+  Result.Failure(ParseError.Bad)
+}
+
+let from_option = try maybe(false) or 5
+puts(Show.show(from_option))  # output: 5
+
+let from_option_success = try maybe(true) or 5
+puts(Show.show(from_option_success))  # output: 42
+
+let from_result = try parse(false) or 9
+puts(Show.show(from_result))  # output: 9
+
+let from_result_success = try parse(true) or 9
+puts(Show.show(from_result_success))  # output: 7

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
 	"strconv"
 )
 
@@ -12,6 +13,7 @@ func __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show(__receiver any) s
 	return show_show_int64(__receiver.(int64))
 }
 var __marmoset_dyn_witness_marmosetDynWitness_show_int64 = marmosetDynWitness_show{show: __marmoset_dyn_adapter_marmosetDynWitness_show_int64_show}
+
 
 type Event struct {
 	Data0 int64
@@ -48,10 +50,21 @@ func (e Event) String() string {
 	}
 }
 
+
 type Box struct{tag int64; value marmosetDyn}
 type Person struct{name string; score int64}
 type Record_box_record_tag_int64_value_marmoset_dyn_closed_owner_record_name_string_score_int64_closed struct{box Box; owner Person}
 type Record_tag_int64_value_int64 struct{tag int64; value int64}
+
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
 
 func make_box_bool_int64(flag bool, seed int64) Box {
     return (func(__src Record_tag_int64_value_int64) Box { return Box{tag: __src.tag, value: marmosetDyn{payload: __src.value, witness: __marmoset_dyn_witness_marmosetDynWitness_show_int64}} })(Record_tag_int64_value_int64{tag: seed, value: func() int64 {
@@ -120,6 +133,10 @@ func describe_input_union_int64_string(input interface{}) string {
     }
 }
 
+func puts_string(value string) struct{} {
+    return extern__std_basics__puts_str(show_show_string(value))
+}
+
 func show_show_int64(x int64) string {
 	return strconv.FormatInt(x, 10)
 }
@@ -172,14 +189,14 @@ func main() {
     _ = exact
     event := Event_Wrapped(Record_box_record_tag_int64_value_marmoset_dyn_closed_owner_record_name_string_score_int64_closed{box: boosted, owner: person})
     _ = event
-    _ = puts(classify_Event(Event_Number(int64(1))))
-    _ = puts(classify_Event(exact))
-    _ = puts(inherent_describe_record_tag_int64_value_dyn_Show_closed(boosted))
-    _ = puts(classify_Event(event))
-    _ = puts(render_twice_record_name_string_score_int64_closed_fn_record_name_string_score_int64_closed_string(person, func(p Person) string {
+    _ = puts_string(classify_Event(Event_Number(int64(1))))
+    _ = puts_string(classify_Event(exact))
+    _ = puts_string(inherent_describe_record_tag_int64_value_dyn_Show_closed(boosted))
+    _ = puts_string(classify_Event(event))
+    _ = puts_string(render_twice_record_name_string_score_int64_closed_fn_record_name_string_score_int64_closed_string(person, func(p Person) string {
         return with_suffix_record_name_string_score_int64_closed_string(p, "?")
     }))
-    _ = puts(render_twice_int64_fn_int64_string(int64(3), show_show_int64))
-    _ = puts(describe_input_union_int64_string(int64(4)))
-    _ = puts(describe_input_union_int64_string("ok"))
+    _ = puts_string(render_twice_int64_fn_int64_string(int64(3), show_show_int64))
+    _ = puts_string(describe_input_union_int64_string(int64(4)))
+    _ = puts_string(describe_input_union_int64_string("ok"))
 }

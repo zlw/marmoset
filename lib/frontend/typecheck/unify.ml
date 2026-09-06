@@ -50,9 +50,9 @@ let rec unify (type1 : mono_type) (type2 : mono_type) : (substitution, Diagnosti
   | TVar var, other -> bind_variable var other
   (* Type variable on right - bind it *)
   | other, TVar var -> bind_variable var other
-  (* Function types - effects must match exactly. *)
+  (* Function types - concrete effects must match; effect-polymorphic arrows can instantiate either way. *)
   | TFun (arg1, ret1, eff1), TFun (arg2, ret2, eff2) ->
-      if eff1 = eff2 then
+      if effect_unifies eff1 eff2 then
         unify_two_pairs (arg1, arg2) (ret1, ret2)
       else
         Error (type_mismatch type1 type2)

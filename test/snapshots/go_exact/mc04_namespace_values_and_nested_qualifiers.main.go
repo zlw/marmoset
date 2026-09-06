@@ -1,5 +1,11 @@
 package main
 
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+	"strconv"
+)
+
 type math__Color struct {
 	Tag int8
 }
@@ -29,6 +35,16 @@ func (e math__Color) String() string {
 
 type Geometry__Point struct{x int64; y int64}
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
+
 func math__describe_math__Color(c math__Color) string {
     __scrutinee_0 := c
     switch __scrutinee_0.Tag {
@@ -47,7 +63,21 @@ func geometry__make_u005fpoint_int64_int64(x int64, y int64) Geometry__Point {
     return Geometry__Point{x: x, y: y}
 }
 
+func puts_int64(value int64) struct{} {
+    return extern__std_basics__puts_str(show_show_int64(value))
+}
 
+func puts_string(value string) struct{} {
+    return extern__std_basics__puts_str(show_show_string(value))
+}
+
+func show_show_int64(x int64) string {
+	return strconv.FormatInt(x, 10)
+}
+
+func show_show_string(x string) string {
+	return x
+}
 func geometry__Show_show_record_x_int64_y_int64_closed(self Geometry__Point) string {
         return "Point"
 }
@@ -61,8 +91,8 @@ func main() {
     _ = math__pi
     main__p := geometry__make_u005fpoint_int64_int64(int64(2), int64(3))
     _ = main__p
-    _ = puts(math__pi)
-    _ = puts(math__describe_math__Color(math__Color_Red()))
-    _ = puts(inherent_distance_record_x_int64_y_int64_closed(main__p))
-    _ = puts(geometry__Show_show_record_x_int64_y_int64_closed(main__p))
+    _ = puts_int64(math__pi)
+    _ = puts_string(math__describe_math__Color(math__Color_Red()))
+    _ = puts_int64(inherent_distance_record_x_int64_y_int64_closed(main__p))
+    _ = puts_string(geometry__Show_show_record_x_int64_y_int64_closed(main__p))
 }

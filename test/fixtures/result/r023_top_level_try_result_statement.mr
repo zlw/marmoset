@@ -1,0 +1,9 @@
+# R023: top-level try can discard an unwrapped success value
+type Error = {
+  Boom = "Boom",
+}
+
+fn ok() -> Result[Int, Error] = Result.Success(41)
+
+try ok()
+puts("done")  # output: done

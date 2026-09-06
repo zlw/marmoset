@@ -1,0 +1,54 @@
+import std.path
+
+export Entry, Kind, LsError, MkdirError, RmdirError, ExistsError, PwdError, ls, mkdir, mkdir_tree, rmdir, rmdir_tree, exists?, pwd
+
+type Kind = { File, Directory, Symlink, Other }
+type Entry = Entry(path.Path, Kind)
+
+type LsError = {
+  NotFound         = "Directory not found",
+  PermissionDenied = "You do not have permission to read this directory",
+  NotDirectory     = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str)       = "Directory listing failed",
+}
+
+type MkdirError = {
+  NotFound         = "Parent directory not found",
+  PermissionDenied = "You do not have permission to create this directory",
+  AlreadyExists    = "Directory already exists",
+  NotDirectory     = "Expected a directory but found a file",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str)       = "Directory creation failed",
+}
+
+type RmdirError = {
+  NotFound         = "Directory not found",
+  PermissionDenied = "You do not have permission to remove this directory",
+  NotDirectory     = "Expected a directory but found a file",
+  NotEmpty         = "Directory is not empty",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str)       = "Directory removal failed",
+}
+
+type ExistsError = {
+  PermissionDenied = "You do not have permission to inspect this path",
+  InvalidPath(Str) = "Path is invalid",
+  Other(Str)       = "Path existence check failed",
+}
+
+type PwdError = {
+  NotFound         = "Current directory was not found",
+  PermissionDenied = "You do not have permission to inspect the current directory",
+  Other(Str)       = "Current directory lookup failed",
+}
+
+extern "std/dir" as dir_shim = {
+  fn ls(path: path.Path) => Result[List[Entry], LsError]
+  fn mkdir(path: path.Path) => Result[Unit, MkdirError]
+  fn mkdir_tree(path: path.Path) => Result[Unit, MkdirError]
+  fn rmdir(path: path.Path) => Result[Unit, RmdirError]
+  fn rmdir_tree(path: path.Path) => Result[Unit, RmdirError]
+  fn exists?(path: path.Path) => Result[Bool, ExistsError]
+  fn pwd() => Result[path.Path, PwdError]
+}

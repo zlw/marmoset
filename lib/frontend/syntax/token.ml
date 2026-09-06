@@ -28,6 +28,7 @@ and token_type =
   | NotEq
   | Arrow (* -> for return type annotations *)
   | FatArrow (* => for effect markers *)
+  | TildeArrow (* ~> for effect-polymorphic markers *)
   | Pipe (* | for union types *)
   | PipeForward (* |> for forward pipe *)
   | Ampersand (* & for trait constraints *)
@@ -66,7 +67,10 @@ and token_type =
   | Case (* case keyword for match arms *)
   | Import
   | Export
+  | Extern
   | As
+  | Try
+  | Wrap
 [@@deriving show]
 
 let init ?(pos = 0) t l = { token_type = t; literal = l; pos }
@@ -95,8 +99,16 @@ let lookup_ident s =
   | "case" -> Case
   | "import" -> Import
   | "export" -> Export
+  | "extern" -> Extern
   | "as" -> As
+  | "try" -> Try
   | _ -> Ident
 
 let%test "lookup_ident recognizes module-system keywords" =
-  lookup_ident "import" = Import && lookup_ident "export" = Export && lookup_ident "as" = As
+  lookup_ident "import" = Import
+  && lookup_ident "export" = Export
+  && lookup_ident "extern" = Extern
+  && lookup_ident "as" = As
+
+let%test "lookup_ident recognizes result propagation keyword and leaves wrap soft" =
+  lookup_ident "try" = Try && lookup_ident "wrap" = Ident

@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+)
 
 type marmosetDyn struct{ payload any; witness any }
 
@@ -13,7 +16,23 @@ var __marmoset_dyn_witness_marmosetDynWitness_show_record_value_int64_closed = m
 
 type Record_value_int64 struct{value int64}
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
 
+func puts_string(value string) struct{} {
+    return extern__std_basics__puts_str(show_show_string(value))
+}
+
+func show_show_string(x string) string {
+	return x
+}
 func Boxed_box_record_value_int64_closed(self Record_value_int64) marmosetDyn {
         return marmosetDyn{payload: self, witness: __marmoset_dyn_witness_marmosetDynWitness_show_record_value_int64_closed}
 }
@@ -25,5 +44,5 @@ func show_show_record_value_int64_closed(x Record_value_int64) string {
 func main() {
     value := Boxed_box_record_value_int64_closed(Record_value_int64{value: int64(1)})
     _ = value
-    _ = puts((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_show); return __witness.show(__dyn.payload) })())
+    _ = puts_string((func() string { __dyn := value; __witness := __dyn.witness.(marmosetDynWitness_show); return __witness.show(__dyn.payload) })())
 }

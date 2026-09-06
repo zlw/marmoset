@@ -67,12 +67,12 @@ let type_expr_key_with_binders (binder_names : string list) (type_expr : AST.typ
     | AST.TCon name -> "Con(" ^ name ^ ")"
     | AST.TTraitObject traits -> "Dyn(" ^ String.concat "&" (List.sort_uniq String.compare traits) ^ ")"
     | AST.TApp (name, args) -> "App(" ^ name ^ "[" ^ String.concat "," (List.map go args) ^ "])"
-    | AST.TArrow (params, ret, is_effectful) ->
+    | AST.TArrow (params, ret, effect) ->
         let arrow =
-          if is_effectful then
-            "=>"
-          else
-            "->"
+          match effect with
+          | AST.Pure -> "->"
+          | AST.Effectful -> "=>"
+          | AST.EffectPoly -> "~>"
         in
         "Arrow(" ^ String.concat "," (List.map go params) ^ arrow ^ go ret ^ ")"
     | AST.TUnion members ->
@@ -106,12 +106,12 @@ let render_type_expr (type_expr : AST.type_expr) : string =
     | AST.TCon name -> name
     | AST.TTraitObject traits -> "Dyn[" ^ String.concat " & " traits ^ "]"
     | AST.TApp (name, args) -> name ^ "[" ^ String.concat ", " (List.map render args) ^ "]"
-    | AST.TArrow (params, ret, is_effectful) ->
+    | AST.TArrow (params, ret, effect) ->
         let arrow =
-          if is_effectful then
-            " => "
-          else
-            " -> "
+          match effect with
+          | AST.Pure -> " -> "
+          | AST.Effectful -> " => "
+          | AST.EffectPoly -> " ~> "
         in
         let params =
           match params with
@@ -170,6 +170,7 @@ let pre_scan_program (program : AST.program) :
       match stmt.stmt with
       | AST.TraitDef trait_def -> register_program_trait traits trait_def
       | AST.TypeDef type_def -> Type_registry.predeclare_named_type type_def
+      | AST.ExternTypeDef extern_type_def -> Type_registry.predeclare_extern_type extern_type_def
       | AST.TypeAlias alias_def -> Annotation.register_type_alias alias_def
       | AST.ShapeDef shape_def -> Type_registry.predeclare_shape shape_def
       | AST.ImplDef impl_def -> Hashtbl.replace explicit_impls (impl_key_of_explicit_impl impl_def) ()
@@ -353,7 +354,7 @@ let clone_default_body
             ( clone_expr condition,
               clone_stmt bound_names consequence,
               Option.map (clone_stmt bound_names) alternative )
-      | AST.Function { origin; generics; params; return_type; is_effectful; body } ->
+      | AST.Function { origin; generics; params; return_type; effect; body } ->
           let generic_names =
             match generics with
             | None -> []
@@ -376,7 +377,7 @@ let clone_default_body
                 Option.map
                   (substitute_type_expr ~trait_subst_name ~target_type ~bound_names:bound_names')
                   return_type;
-              is_effectful;
+              effect;
               body = clone_stmt bound_names' body;
             }
       | AST.Call (callee, args) -> AST.Call (clone_expr callee, List.map clone_expr args)
@@ -386,6 +387,9 @@ let clone_default_body
           AST.Match
             ( clone_expr scrutinee,
               List.map (fun (arm : AST.match_arm) -> AST.{ arm with body = clone_expr arm.body }) arms )
+      | AST.Try { tried; wrap; fallback } ->
+          AST.Try { tried = clone_expr tried; wrap; fallback = Option.map clone_expr fallback }
+      | AST.Wrap { wrapped; target } -> AST.Wrap { wrapped = clone_expr wrapped; target }
       | AST.RecordLit (fields, spread) ->
           AST.RecordLit
             ( List.map
@@ -420,8 +424,8 @@ let clone_default_body
       | AST.Return expr -> AST.Return (clone_expr bound_names expr)
       | AST.ExpressionStmt expr -> AST.ExpressionStmt (clone_expr bound_names expr)
       | AST.Block stmts -> AST.Block (List.map (clone_stmt bound_names) stmts)
-      | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-      | AST.DeriveDef _ | AST.TypeAlias _ ->
+      | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+      | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
           stmt.stmt
     in
     AST.mk_stmt ~pos:stmt.pos ~end_pos:stmt.end_pos ~file_id:stmt.file_id stmt_kind
@@ -486,6 +490,7 @@ let synthesize_user_impl
             impl_type_params;
             impl_trait_name = trait_summary.name;
             impl_for_type = for_type;
+            impl_trait_args = [ for_type ];
             impl_methods = methods;
           }))
 
@@ -709,6 +714,7 @@ let%test "expand_user_derives rewrites user derive into synthetic impl" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -755,6 +761,7 @@ let%test "expand_user_derives keeps builtin residual before synthetic impl" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -800,6 +807,7 @@ let%test "expand_user_derives rejects required-method traits" =
          {
            name = "Needful";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -835,6 +843,7 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
          {
            name = "Base";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -856,6 +865,7 @@ let%test "expand_user_derives orders supertraits before dependent user traits" =
          {
            name = "Child";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [ "Base" ];
            methods =
              [
@@ -902,6 +912,7 @@ let%test "expand_user_derives rejects duplicate traits in one derive clause" =
          {
            name = "Printable";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [];
            methods =
              [
@@ -952,6 +963,7 @@ let%test "expand_user_derives accepts shape superconstraints satisfied by transp
          {
            name = "Greeter";
            type_param = Some "a";
+           type_params = [ "a" ];
            supertraits = [ "Named" ];
            methods =
              [

@@ -1,1 +1,17 @@
+fn show_int_list_items(items: List[Int]) -> Str = {
+  if (len(items) == 0) {
+    ""
+  } else {
+    if (len(rest(items)) == 0) {
+      Show.show(first(items))
+    } else {
+      Show.show(first(items)) + " " + show_int_list_items(rest(items))
+    }
+  }
+}
+
+impl Show[List[Int]] = {
+  fn show(items: List[Int]) -> Str = "[" + show_int_list_items(items) + "]"
+}
+
 puts([1, 2, 3])  # output: [1 2 3]

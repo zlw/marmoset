@@ -1,2 +1,2 @@
 let _ = 1
-puts(_)  # error: explicit '=>'
+let read_discard: (Int) -> Int = (x: Int) -> _  # error: Unbound variable: _

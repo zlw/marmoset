@@ -1,0 +1,24 @@
+# P29: Effect-polymorphic bind accepts effectful placeholder callbacks
+type Result[a, e] = { Success(a), Failure(e) }
+type Error = { Bad = "bad" }
+
+impl Result[a, e] = {
+  fn bind[b](self: Result[a, e], f: (a) ~> Result[b, e]) ~> Result[b, e] = match self {
+    case Result.Success(value): f(value)
+    case Result.Failure(err): Result.Failure(err)
+  }
+}
+
+fn source() -> Result[Int, Error] = Result.Success(41)
+
+fn impure(value: Int) => Result[Int, Error] = {
+  puts(value)  # output: 41
+  Result.Success(value + 1)
+}
+
+let result = Result.bind(source(), impure(_))
+
+match result {
+  case Result.Success(value): puts(value)  # output: 42
+  case Result.Failure(_): puts(0)
+}

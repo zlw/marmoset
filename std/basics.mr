@@ -1,0 +1,9 @@
+import std.prelude.Show
+
+export puts
+
+extern "std/basics" as basics_shim = {
+  fn puts_str(value: Str) => Unit
+}
+
+fn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))

@@ -40,6 +40,10 @@ let create_from_program (program : AST.program) : t =
     | AST.Match (scrutinee, arms) ->
         visit_expr scrutinee;
         List.iter (fun (arm : AST.match_arm) -> visit_expr arm.body) arms
+    | AST.Try { tried; fallback; _ } ->
+        visit_expr tried;
+        Option.iter visit_expr fallback
+    | AST.Wrap { wrapped; _ } -> visit_expr wrapped
     | AST.RecordLit (fields, spread) ->
         List.iter (fun (field : AST.record_field) -> Option.iter visit_expr field.field_value) fields;
         Option.iter visit_expr spread
@@ -60,7 +64,9 @@ let create_from_program (program : AST.program) : t =
     | AST.Let let_binding -> visit_expr let_binding.value
     | AST.Return expr | AST.ExpressionStmt expr -> visit_expr expr
     | AST.Block stmts -> List.iter visit_stmt stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _ -> ()
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TypeAlias _ | AST.DeriveDef _
+    | AST.ExternBlock _ ->
+        ()
     | AST.TraitDef trait_def -> List.iter visit_trait_method trait_def.methods
     | AST.ImplDef impl_def -> List.iter visit_impl_method impl_def.impl_methods
     | AST.InherentImplDef impl_def -> List.iter visit_impl_method impl_def.inherent_methods
@@ -87,6 +93,7 @@ let%test "create_from_program seeds expr and method ids independently" =
            {
              name = "Show";
              type_param = Some "a";
+             type_params = [ "a" ];
              supertraits = [];
              methods =
                [
@@ -107,6 +114,7 @@ let%test "create_from_program seeds expr and method ids independently" =
              impl_type_params = [];
              impl_trait_name = "Show";
              impl_for_type = AST.TCon "Int";
+             impl_trait_args = [ AST.TCon "Int" ];
              impl_methods =
                [
                  {

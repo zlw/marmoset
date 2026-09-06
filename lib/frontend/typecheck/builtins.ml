@@ -57,6 +57,7 @@ let init_builtin_traits () =
     {
       trait_name = "eq";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -71,6 +72,7 @@ let init_builtin_traits () =
     {
       trait_name = "show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -81,6 +83,7 @@ let init_builtin_traits () =
     {
       trait_name = "debug";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -91,6 +94,7 @@ let init_builtin_traits () =
     {
       trait_name = "ord";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [ "eq" ];
       trait_methods =
         [
@@ -106,6 +110,7 @@ let init_builtin_traits () =
     {
       trait_name = "hash";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TVar "a") ] ~return_type:TInt () ];
@@ -116,6 +121,7 @@ let init_builtin_traits () =
     {
       trait_name = "num";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -139,6 +145,7 @@ let init_builtin_traits () =
     {
       trait_name = "rem";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [
@@ -153,6 +160,7 @@ let init_builtin_traits () =
     {
       trait_name = "neg";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TVar "a") ] ~return_type:(TVar "a") () ];
@@ -172,6 +180,7 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
 
@@ -181,6 +190,7 @@ let init_builtin_impls () =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TBool () ];
     };
@@ -191,6 +201,7 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
@@ -201,6 +212,7 @@ let init_builtin_impls () =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -216,6 +228,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
     };
 
@@ -225,6 +238,7 @@ let init_builtin_impls () =
       impl_trait_name = "num";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"add" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt ();
@@ -240,6 +254,7 @@ let init_builtin_impls () =
       impl_trait_name = "rem";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"rem" ~params:[ ("x", TInt); ("y", TInt) ] ~return_type:TInt () ];
     };
@@ -250,6 +265,7 @@ let init_builtin_impls () =
       impl_trait_name = "neg";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TInt) ] ~return_type:TInt () ];
     };
 
@@ -261,6 +277,7 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TBool;
+      impl_trait_args = [ TBool ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TBool) ] ~return_type:TString () ];
     };
@@ -271,6 +288,7 @@ let init_builtin_impls () =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TBool;
+      impl_trait_args = [ TBool ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TBool); ("y", TBool) ] ~return_type:TBool () ];
     };
@@ -281,6 +299,7 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TBool;
+      impl_trait_args = [ TBool ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TBool) ] ~return_type:TString () ];
     };
@@ -291,6 +310,7 @@ let init_builtin_impls () =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = TBool;
+      impl_trait_args = [ TBool ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -306,6 +326,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TBool;
+      impl_trait_args = [ TBool ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TBool) ] ~return_type:TInt () ];
     };
 
@@ -317,6 +338,7 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TString;
+      impl_trait_args = [ TString ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TString) ] ~return_type:TString () ];
     };
@@ -327,6 +349,7 @@ let init_builtin_impls () =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TString;
+      impl_trait_args = [ TString ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TString); ("y", TString) ] ~return_type:TBool ();
@@ -339,6 +362,7 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TString;
+      impl_trait_args = [ TString ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TString) ] ~return_type:TString () ];
     };
@@ -349,6 +373,7 @@ let init_builtin_impls () =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = TString;
+      impl_trait_args = [ TString ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -364,6 +389,7 @@ let init_builtin_impls () =
       impl_trait_name = "hash";
       impl_type_params = [];
       impl_for_type = TString;
+      impl_trait_args = [ TString ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"hash" ~params:[ ("x", TString) ] ~return_type:TInt () ];
     };
 
@@ -375,6 +401,7 @@ let init_builtin_impls () =
       impl_trait_name = "show";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TFloat) ] ~return_type:TString () ];
     };
@@ -385,6 +412,7 @@ let init_builtin_impls () =
       impl_trait_name = "eq";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"eq" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TBool () ];
     };
@@ -395,6 +423,7 @@ let init_builtin_impls () =
       impl_trait_name = "debug";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods =
         [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TFloat) ] ~return_type:TString () ];
     };
@@ -405,6 +434,7 @@ let init_builtin_impls () =
       impl_trait_name = "ord";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"compare"
@@ -420,6 +450,7 @@ let init_builtin_impls () =
       impl_trait_name = "num";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods =
         [
           Trait_registry.mk_method_sig ~name:"add" ~params:[ ("x", TFloat); ("y", TFloat) ] ~return_type:TFloat ();
@@ -435,13 +466,41 @@ let init_builtin_impls () =
       impl_trait_name = "neg";
       impl_type_params = [];
       impl_for_type = TFloat;
+      impl_trait_args = [ TFloat ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"neg" ~params:[ ("x", TFloat) ] ~return_type:TFloat () ];
+    };
+
+  (* unit: show, debug *)
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "show";
+      impl_type_params = [];
+      impl_for_type = TNull;
+      impl_trait_args = [ TNull ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TNull) ] ~return_type:TString () ];
+    };
+
+  Trait_registry.register_impl ~builtin:true
+    {
+      impl_trait_name = "debug";
+      impl_type_params = [];
+      impl_for_type = TNull;
+      impl_trait_args = [ TNull ];
+      impl_methods =
+        [ Trait_registry.mk_method_sig ~name:"debug" ~params:[ ("x", TNull) ] ~return_type:TString () ];
     }
 
 let seed_builtin_values (env : Infer.type_env) : Infer.type_env =
   List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env builtin_types
 
 let builtin_value_env () : Infer.type_env = seed_builtin_values Infer.empty_env
+let primitive_builtin_types = List.filter (fun (name, _) -> not (String.equal name "puts")) builtin_types
+
+let seed_primitive_values (env : Infer.type_env) : Infer.type_env =
+  List.fold_left (fun env_acc (name, poly) -> Infer.TypeEnv.add name poly env_acc) env primitive_builtin_types
+
+let primitive_value_env () : Infer.type_env = seed_primitive_values Infer.empty_env
 
 (* ============================================================
    Tests
@@ -466,11 +525,11 @@ let%test "builtin traits are registered" =
 
 let%test "puts is effectful, other builtins are pure" =
   let is_effectful = function
-    | Types.TFun (_, _, true) -> true
+    | Types.TFun (_, _, Types.Effectful) -> true
     | _ -> false
   in
   let is_pure = function
-    | Types.TFun (_, _, false) -> true
+    | Types.TFun (_, _, Types.Pure) -> true
     | _ -> false
   in
   let puts_type = List.assoc "puts" builtin_types in

@@ -1,0 +1,9 @@
+import std.io
+
+fn hello_world() => Result[Unit, io.Error] = {
+  try io.print("What's your name? ")
+  let name = try io.read()
+  io.puts("Hello, #{name}")
+}
+
+try hello_world()

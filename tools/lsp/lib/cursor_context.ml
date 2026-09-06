@@ -152,6 +152,10 @@ let rec build_scope_index_expr (acc : scope_index) (expr : Surface.surface_expr)
       List.fold_left
         (fun acc (arm : Surface.surface_match_arm) -> build_scope_index_expr_or_block acc arm.se_arm_body)
         acc arms
+  | Surface.SETry { se_tried; se_fallback; _ } ->
+      let acc = build_scope_index_expr acc se_tried in
+      Option.fold ~none:acc ~some:(build_scope_index_expr acc) se_fallback
+  | Surface.SEWrap { se_wrapped; _ } -> build_scope_index_expr acc se_wrapped
   | Surface.SERecordLit (fields, spread) ->
       let acc =
         List.fold_left
@@ -208,7 +212,10 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
   List.fold_left
     (fun acc (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
-      | Surface.SExportDecl _ | Surface.SImportDecl _ -> acc
+      | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ -> acc
+      | Surface.SExternTypeDef { extern_type_name; extern_type_name_ref } ->
+          add_binding acc ~binding_kind:Type_binding ~binding_name:extern_type_name
+            ~binding_ref:extern_type_name_ref ~scope_start:stmt.std_pos ~scope_end:stmt.std_end_pos
       | Surface.SLet { name; name_ref; value; type_annotation } ->
           let acc =
             add_binding acc ~binding_kind:Value_binding ~binding_name:name ~binding_ref:name_ref
@@ -235,8 +242,8 @@ let build_scope_index (program : Surface.surface_program) : scope_index =
           in
           let acc =
             match type_body with
-            | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
-                build_scope_index_type acc type_expr
+            | Surface.STTransparent type_expr -> build_scope_index_type acc type_expr
+            | Surface.STNamedWrapper type_exprs -> List.fold_left build_scope_index_type acc type_exprs
             | Surface.STNamedProduct fields ->
                 List.fold_left
                   (fun acc (field : Surface.surface_record_type_field) ->
@@ -475,6 +482,26 @@ let rec reference_in_expr ~(scope_index : scope_index) ~(offset : int) (expr : S
            (fun (arm : Surface.surface_match_arm) ->
              reference_in_expr_or_block ~scope_index ~offset arm.se_arm_body)
            arms)
+  | Surface.SETry { se_tried; se_wrap; se_fallback } ->
+      first_some
+        (reference_in_expr ~scope_index ~offset se_tried)
+        (first_some
+           (match se_wrap with
+           | Some (root_ref, member_ref) when name_ref_contains ~offset member_ref ->
+               Some (Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+           | Some (root_ref, member_ref) when name_ref_contains ~offset root_ref ->
+               Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+           | _ -> None)
+           (Option.bind se_fallback (reference_in_expr ~scope_index ~offset)))
+  | Surface.SEWrap { se_wrapped; se_wrap = root_ref, member_ref } ->
+      first_some
+        (reference_in_expr ~scope_index ~offset se_wrapped)
+        (if name_ref_contains ~offset member_ref then
+           Some (Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+         else if name_ref_contains ~offset root_ref then
+           Some (Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id })
+         else
+           None)
   | Surface.SERecordLit (fields, spread) ->
       first_some
         (List.find_map
@@ -576,7 +603,9 @@ and reference_in_method_impl ~(scope_index : scope_index) ~(offset : int) (metho
 let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : Surface.surface_top_stmt) :
     reference option =
   match stmt.std_decl with
-  | Surface.SExportDecl _ -> None
+  | Surface.SExportDecl _ | Surface.SExternBlock _ -> None
+  | Surface.SExternTypeDef { extern_type_name_ref; _ } ->
+      declaration_ref_if_contains ~offset ~name_ref:extern_type_name_ref ~declaration_kind:Type_decl
   | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
       first_some
         (Option.bind import_alias_ref (fun alias_ref ->
@@ -623,8 +652,9 @@ let reference_in_top_stmt ~(scope_index : scope_index) ~(offset : int) (stmt : S
         (first_some type_param_ref
            (first_some
               (match type_body with
-              | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
-                  reference_in_type ~scope_index ~offset type_expr
+              | Surface.STTransparent type_expr -> reference_in_type ~scope_index ~offset type_expr
+              | Surface.STNamedWrapper type_exprs ->
+                  List.find_map (reference_in_type ~scope_index ~offset) type_exprs
               | Surface.STNamedProduct fields ->
                   List.find_map
                     (fun (field : Surface.surface_record_type_field) ->
@@ -742,6 +772,25 @@ let rec collect_expr_references ~(scope_index : scope_index) (expr : Surface.sur
       @ List.concat_map
           (fun (arm : Surface.surface_match_arm) -> collect_expr_or_block_references ~scope_index arm.se_arm_body)
           arms
+  | Surface.SETry { se_tried; se_wrap; se_fallback } -> (
+      collect_expr_references ~scope_index se_tried
+      @ (match se_wrap with
+        | Some (root_ref, member_ref) ->
+            [
+              Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+              Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+            ]
+        | None -> [])
+      @
+      match se_fallback with
+      | None -> []
+      | Some fallback -> collect_expr_references ~scope_index fallback)
+  | Surface.SEWrap { se_wrapped; se_wrap = root_ref, member_ref } ->
+      collect_expr_references ~scope_index se_wrapped
+      @ [
+          Qualified_root { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+          Qualified_member { root_ref; root_expr_id = None; member_ref; access_expr_id = expr.se_id };
+        ]
   | Surface.SERecordLit (fields, spread) ->
       List.concat_map
         (fun (field : Surface.surface_record_field) ->
@@ -814,7 +863,9 @@ let collect_references ~(input : cursor_context_input) : reference list =
   List.concat_map
     (fun (stmt : Surface.surface_top_stmt) ->
       match stmt.std_decl with
-      | Surface.SExportDecl _ -> []
+      | Surface.SExportDecl _ | Surface.SExternBlock _ -> []
+      | Surface.SExternTypeDef { extern_type_name_ref; _ } ->
+          [ Declaration_head { name_ref = extern_type_name_ref; declaration_kind = Type_decl } ]
       | Surface.SImportDecl { import_path; import_path_refs; import_alias_ref; _ } ->
           Option.fold ~none:[]
             ~some:(fun alias_ref -> [ Import_alias { alias_ref; import_path } ])
@@ -835,8 +886,9 @@ let collect_references ~(input : cursor_context_input) : reference list =
           @ collect_expr_or_block_references ~scope_index:input.scope_index body
       | Surface.STypeDef { type_body; derive; _ } ->
           (match type_body with
-          | Surface.STTransparent type_expr | Surface.STNamedWrapper type_expr ->
-              collect_type_references ~scope_index:input.scope_index type_expr
+          | Surface.STTransparent type_expr -> collect_type_references ~scope_index:input.scope_index type_expr
+          | Surface.STNamedWrapper type_exprs ->
+              List.concat_map (collect_type_references ~scope_index:input.scope_index) type_exprs
           | Surface.STNamedProduct fields ->
               List.concat_map
                 (fun (field : Surface.surface_record_type_field) ->

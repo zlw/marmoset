@@ -228,6 +228,10 @@ let rec collect_expr ~source ~type_map ~environment ~params ~tokens (expr : Ast.
             { pos = vstart; end_pos = vstart + vlen - 1; token_type = enum_member_type; modifiers = 0 } :: !tokens
       | None -> ());
       List.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) args
+  | Ast.AST.Try { tried; fallback; _ } ->
+      collect_expr ~source ~type_map ~environment ~params ~tokens tried;
+      Option.iter (collect_expr ~source ~type_map ~environment ~params ~tokens) fallback
+  | Ast.AST.Wrap { wrapped; _ } -> collect_expr ~source ~type_map ~environment ~params ~tokens wrapped
   | Ast.AST.TypeCheck (e, _te) -> collect_expr ~source ~type_map ~environment ~params ~tokens e
   | Ast.AST.BlockExpr stmts -> List.iter (collect_stmt ~source ~type_map ~environment ~params ~tokens) stmts
 
@@ -340,6 +344,14 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
+  | Ast.AST.ExternTypeDef { extern_type_name } -> (
+      let nlen = String.length extern_type_name in
+      match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) extern_type_name with
+      | Some (nstart, _) ->
+          tokens :=
+            { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
+            :: !tokens
+      | None -> ())
   | Ast.AST.ShapeDef { shape_name; _ } -> (
       let nlen = String.length shape_name in
       match find_name ~source ~start:stmt.pos ~limit:(stmt.end_pos + 1) shape_name with
@@ -445,6 +457,43 @@ and collect_stmt ~source ~type_map ~environment ~params ~tokens (stmt : Ast.AST.
             { pos = nstart; end_pos = nstart + nlen - 1; token_type = _type_type; modifiers = declaration_mod }
             :: !tokens
       | None -> ())
+  | Ast.AST.ExternBlock { extern_fns; _ } ->
+      List.iter
+        (fun (fn_sig : Ast.AST.extern_fn_sig) ->
+          let fn_len = String.length fn_sig.extern_fn_name in
+          (match
+             find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1)
+               fn_sig.extern_fn_name
+           with
+          | Some (fn_start, _) ->
+              tokens :=
+                {
+                  pos = fn_start;
+                  end_pos = fn_start + fn_len - 1;
+                  token_type = function_type;
+                  modifiers = declaration_mod;
+                }
+                :: !tokens
+          | None -> ());
+          List.iter
+            (fun (param : Ast.AST.extern_param) ->
+              let param_len = String.length param.extern_param_name in
+              match
+                find_name ~source ~start:fn_sig.extern_fn_pos ~limit:(fn_sig.extern_fn_end_pos + 1)
+                  param.extern_param_name
+              with
+              | Some (param_start, _) ->
+                  tokens :=
+                    {
+                      pos = param_start;
+                      end_pos = param_start + param_len - 1;
+                      token_type = parameter_type;
+                      modifiers = declaration_mod;
+                    }
+                    :: !tokens
+              | None -> ())
+            fn_sig.extern_fn_params)
+        extern_fns
   | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
   | Ast.AST.DeriveDef _ -> ()
 
@@ -591,3 +640,20 @@ let%test "method call produces method token" =
   let src = "let hello = (_: Int) -> \"hi\"; let r = { hello: hello }\nr.hello(0)" in
   let tokens = get_tokens src in
   has_token_type method_type tokens
+
+let%test "extern signatures produce function and parameter declaration tokens" =
+  let source = "extern \"std/bytes\" = { fn from_str(input: Str) -> Str }" in
+  Doc_state.with_temp_project
+    [ ("std/bytes.mr", source) ]
+    (fun root ->
+      let file_id = Filename.concat root "std/bytes.mr" in
+      let result = Doc_state.analyze_with_file_id ~source_root:root ~file_id ~source () in
+      match (result.program, result.type_map, result.environment) with
+      | Some prog, Some tm, Some env -> (
+          match compute ~source ~program:prog ~type_map:tm ~environment:env with
+          | Some st ->
+              let decoded = decode_tokens st.data in
+              List.exists (fun (_, _, _, t, m) -> t = function_type && m land declaration_mod <> 0) decoded
+              && List.exists (fun (_, _, _, t, m) -> t = parameter_type && m land declaration_mod <> 0) decoded
+          | None -> false)
+      | _ -> false)

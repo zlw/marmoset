@@ -283,7 +283,7 @@ run_override_callback_structural_assertions() {
     if ! grep -q 'return f(x)' "$main_go"; then
         failures+=("override helper no longer forwards the callback directly")
     fi
-    if ! grep -Eq '_ = puts\(Child_cast_int64__int64\(int64\(1\), __section_.*_int64\)\)' "$main_go"; then
+    if ! grep -Eq '_ = puts_int64\(Child_cast_int64__int64\(int64\(1\), __section_.*_int64\)\)' "$main_go"; then
         failures+=("main no longer routes the qualified override through the lifted helper")
     fi
 

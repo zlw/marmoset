@@ -1,5 +1,14 @@
 # E102: Enum compatibility sugar pretty-prints nested boxed payloads
 enum Tree = { Leaf(Int), Branch(Tree, Tree) }
 
+fn show_tree(tree: Tree) -> Str = match tree {
+  case Tree.Leaf(value): "Leaf(" + Show.show(value) + ")"
+  case Tree.Branch(left, right): "Branch(" + show_tree(left) + ", " + show_tree(right) + ")"
+}
+
+impl Show[Tree] = {
+  fn show(tree: Tree) -> Str = show_tree(tree)
+}
+
 let tree = Tree.Branch(Tree.Leaf(1), Tree.Branch(Tree.Leaf(2), Tree.Leaf(3)))
 puts(tree)  # output: Branch(Leaf(1), Branch(Leaf(2), Leaf(3)))

@@ -4,6 +4,8 @@
   "scopeName": "source.marmoset",
   "patterns": [
     { "include": "#comment" },
+    { "include": "#extern-type-definition" },
+    { "include": "#extern-block" },
     { "include": "#fn-declaration" },
     { "include": "#enum-definition" },
     { "include": "#shape-definition" },
@@ -79,7 +81,11 @@
       "patterns": [
         {
           "name": "keyword.control.marmoset",
-          "match": "\\b(if|else|match|case|return)\\b"
+          "match": "\\b(if|else|match|case|return|try|or)\\b"
+        },
+        {
+          "name": "keyword.other.wrap.marmoset",
+          "match": "\\bwrap\\b"
         },
         {
           "name": "keyword.other.let.marmoset",
@@ -120,6 +126,10 @@
         {
           "name": "keyword.other.type.marmoset",
           "match": "\\btype\\b"
+        },
+        {
+          "name": "keyword.other.extern.marmoset",
+          "match": "\\bextern\\b"
         }
       ]
     },
@@ -138,7 +148,7 @@
       "patterns": [
         {
           "name": "keyword.operator.arrow.marmoset",
-          "match": "->|=>"
+          "match": "->|=>|~>"
         },
         {
           "name": "keyword.operator.pipe.marmoset",
@@ -255,12 +265,12 @@
     },
 
     "function-type": {
-      "comment": "Function types: (Int, Str) -> Bool or (Int, Str) => Bool",
+      "comment": "Function types: (Int, Str) -> Bool, (Int, Str) => Bool, or (Int, Str) ~> Bool",
       "begin": "(?<![A-Za-z_])\\(",
       "beginCaptures": {
         "0": { "name": "punctuation.bracket.round.begin.marmoset" }
       },
-      "end": "(?<=\\))\\s*(->|=>)\\s*",
+      "end": "(?<=\\))\\s*(->|=>|~>)\\s*",
       "endCaptures": {
         "1": { "name": "keyword.operator.arrow.marmoset" }
       },
@@ -280,7 +290,7 @@
 
     "intersection-type": {
       "comment": "Intersection types: Named & Aged, List[Int] & Named",
-      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
+      "match": "(?<![\\w\\[])(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>|~>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))\\s*(&)\\s*(Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}|\\([^()]+\\)\\s*(?:->|=>|~>)\\s*(?:Dyn\\[[^\\]]+\\]|[a-zA-Z_][a-zA-Z0-9_]*(?:\\[[^\\]]+\\])?|\\{[^{}]*\\}))(?!\\w)",
       "captures": {
         "1": { "name": "entity.name.type.marmoset" },
         "2": { "name": "keyword.operator.constraint.marmoset" },
@@ -400,6 +410,44 @@
       "comment": "Enum variant: some(a) or none",
       "patterns": [
         {
+          "comment": "Variant with fields and a canonical message: some(a, b) = \"message\"",
+          "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()(?=[^{}\\n]*\\)\\s*=)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.variant.marmoset" },
+            "2": { "name": "punctuation.bracket.round.begin.marmoset" }
+          },
+          "end": "(?=,|\\})",
+          "patterns": [
+            {
+              "name": "punctuation.bracket.round.end.marmoset",
+              "match": "\\)"
+            },
+            {
+              "name": "keyword.operator.assignment.marmoset",
+              "match": "="
+            },
+            { "include": "#string" },
+            { "include": "#type-annotation" },
+            { "include": "#punctuation" }
+          ]
+        },
+        {
+          "comment": "Variant without fields and with a canonical message: none = \"message\"",
+          "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b(?=\\s*=)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.variant.marmoset" }
+          },
+          "end": "(?=,|\\})",
+          "patterns": [
+            {
+              "name": "keyword.operator.assignment.marmoset",
+              "match": "="
+            },
+            { "include": "#string" },
+            { "include": "#punctuation" }
+          ]
+        },
+        {
           "comment": "Variant with fields: some(a, b)",
           "begin": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(\\()",
           "beginCaptures": {
@@ -449,7 +497,7 @@
         },
         {
           "comment": "Return type arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#type-annotation" },
@@ -551,7 +599,7 @@
         { "include": "#parameter-list-inner" },
         {
           "comment": "Return type arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#type-annotation" },
@@ -628,7 +676,7 @@
         { "include": "#parameter-list-inner" },
         {
           "comment": "Return type after )",
-          "match": "(\\))\\s*(->|=>)",
+          "match": "(\\))\\s*(->|=>|~>)",
           "captures": {
             "1": { "name": "punctuation.bracket.round.end.marmoset" },
             "2": { "name": "keyword.operator.arrow.marmoset" }
@@ -677,6 +725,61 @@
         { "include": "#constructor-type-body" },
         { "include": "#wrapper-type" },
         { "include": "#type-annotation" }
+      ]
+    },
+
+    "extern-type-definition": {
+      "comment": "extern type File",
+      "match": "\\b(extern)\\s+(type)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.other.extern.marmoset" },
+        "2": { "name": "keyword.other.type.marmoset" },
+        "3": { "name": "entity.name.type.marmoset" }
+      }
+    },
+
+    "extern-block": {
+      "comment": "extern \"std/file\" as file_shim = { ... }",
+      "begin": "\\b(extern)\\s+(\"(?:\\\\.|[^\"\\\\])*\")\\s*(?:\\s+(as)\\s+([a-zA-Z_][a-zA-Z0-9_]*))?\\s*(=)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.extern.marmoset" },
+        "2": { "name": "string.quoted.double.marmoset" },
+        "3": { "name": "keyword.other.as.marmoset" },
+        "4": { "name": "entity.name.namespace.marmoset" },
+        "5": { "name": "keyword.operator.assignment.marmoset" },
+        "6": { "name": "punctuation.bracket.curly.begin.marmoset" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.bracket.curly.end.marmoset" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#extern-function-signature" }
+      ]
+    },
+
+    "extern-function-signature": {
+      "comment": "fn read(path: Str) -> Bytes",
+      "begin": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*[!?]?)\\s*(\\()",
+      "beginCaptures": {
+        "1": { "name": "storage.type.function.marmoset" },
+        "2": { "name": "entity.name.function.marmoset" },
+        "3": { "name": "punctuation.bracket.round.begin.marmoset" }
+      },
+      "end": "(?=\\n|;|\\})",
+      "patterns": [
+        { "include": "#parameter-list-inner" },
+        {
+          "comment": "Return type after )",
+          "match": "(\\))\\s*(->|=>)",
+          "captures": {
+            "1": { "name": "punctuation.bracket.round.end.marmoset" },
+            "2": { "name": "keyword.operator.arrow.marmoset" }
+          }
+        },
+        { "include": "#type-annotation" },
+        { "include": "#punctuation" }
       ]
     },
 
@@ -833,8 +936,8 @@
     },
 
     "lambda-expression": {
-      "comment": "(x: Int) -> x + 1 or (x: Int) => { x + 1 }",
-      "begin": "(?=\\([^\\n]*\\)\\s*(?:->|=>))",
+      "comment": "(x: Int) -> x + 1, (x: Int) => { x + 1 }, or (x: Int) ~> x + 1",
+      "begin": "(?=\\([^\\n]*\\)\\s*(?:->|=>|~>))",
       "end": "(?<=\\})|$",
       "patterns": [
         {
@@ -853,7 +956,7 @@
         },
         {
           "comment": "Lambda arrow",
-          "match": "->|=>",
+          "match": "->|=>|~>",
           "name": "keyword.operator.arrow.marmoset"
         },
         { "include": "#block" },

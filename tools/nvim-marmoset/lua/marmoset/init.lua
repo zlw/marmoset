@@ -1,51 +1,13 @@
 local M = {}
-local uv = vim.uv or vim.loop
 
 M._config = {
   lsp = {
     enable = true,
-    cmd = { "marmoset", "lsp" },
-    cmd_env = {},
   },
 }
 
-local function path_exists(path)
-  return uv.fs_stat(path) ~= nil
-end
-
-local function parent_dir(path)
-  local parent = vim.fs.dirname(path)
-  if not parent or parent == path then
-    return nil
-  end
-  return parent
-end
-
-local function find_marmoset_root(start_path)
-  local current = start_path
-
-  while current do
-    if path_exists(current .. "/std/prelude.mr") then
-      return current
-    end
-    current = parent_dir(current)
-  end
-
-  return nil
-end
-
 local function repo_binary_path(root)
   return root .. "/marmoset"
-end
-
-local function resolve_lsp_cmd(base_cmd, marmoset_root)
-  local cmd = vim.deepcopy(base_cmd)
-
-  if marmoset_root and type(cmd) == "table" and cmd[1] == "marmoset" then
-    cmd[1] = repo_binary_path(marmoset_root)
-  end
-
-  return cmd
 end
 
 function M.setup(opts)
@@ -73,12 +35,6 @@ function M.setup(opts)
     if opts.lsp.enable ~= nil then
       M._config.lsp.enable = opts.lsp.enable
     end
-    if opts.lsp.cmd then
-      M._config.lsp.cmd = opts.lsp.cmd
-    end
-    if opts.lsp.cmd_env then
-      M._config.lsp.cmd_env = opts.lsp.cmd_env
-    end
   end
 end
 
@@ -89,21 +45,22 @@ function M._start_lsp()
 
   local root_dir = vim.fs.root(0, { ".git", "dune-project", "Makefile" })
     or vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":h")
-  local marmoset_root = find_marmoset_root(root_dir)
-  local cmd = resolve_lsp_cmd(M._config.lsp.cmd, marmoset_root)
+  local marmoset_root = vim.fn.environ().MARMOSET_ROOT
 
-  if vim.fn.executable(cmd[1]) ~= 1 then
+  if not marmoset_root or marmoset_root == "" then
+    vim.notify(
+      "MARMOSET_ROOT is not set; set it to the Marmoset repo root",
+      vim.log.levels.ERROR
+    )
     return
   end
 
-  local cmd_env = vim.tbl_extend("force", vim.fn.environ(), M._config.lsp.cmd_env or {})
-  if marmoset_root then
-    cmd_env.MARMOSET_ROOT = marmoset_root
-  end
+  local cmd_env = vim.fn.environ()
+  cmd_env.MARMOSET_ROOT = marmoset_root
 
   vim.lsp.start({
     name = "marmoset",
-    cmd = cmd,
+    cmd = { repo_binary_path(marmoset_root), "lsp" },
     cmd_env = cmd_env,
     root_dir = root_dir,
   })

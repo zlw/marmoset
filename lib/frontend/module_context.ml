@@ -22,6 +22,7 @@ type parsed_module = {
 
 type module_graph = {
   root_dir : string;
+  toolchain_root : string option;
   modules : (string, parsed_module) Hashtbl.t;
   dependencies : (string, string list) Hashtbl.t;
   topo_order : string list;
@@ -33,10 +34,12 @@ let cycle_error (cycle : string list) : Diagnostic.t =
     ~message:(Printf.sprintf "Circular module dependency: %s" (String.concat " -> " cycle))
 
 let build_graph
+    ?toolchain_root
     ~(root_dir : string)
     ~(modules : (string, parsed_module) Hashtbl.t)
     ~(dependencies : (string, string list) Hashtbl.t)
-    ~(entry_module : string) : (module_graph, Diagnostic.t) result =
+    ~(entry_module : string)
+    () : (module_graph, Diagnostic.t) result =
   let visiting : (string, int) Hashtbl.t = Hashtbl.create 16 in
   let visited : (string, unit) Hashtbl.t = Hashtbl.create 16 in
   let order = ref [] in
@@ -81,7 +84,7 @@ let build_graph
   in
   match visit [] entry_module with
   | Error _ as err -> err
-  | Ok () -> Ok { root_dir; modules; dependencies; topo_order = List.rev !order; entry_module }
+  | Ok () -> Ok { root_dir; toolchain_root; modules; dependencies; topo_order = List.rev !order; entry_module }
 
 let%test "build_graph topo orders dependencies before dependents" =
   let mk module_id =
@@ -103,7 +106,7 @@ let%test "build_graph topo orders dependencies before dependents" =
   Hashtbl.replace deps "main" [ "math" ];
   Hashtbl.replace deps "math" [ "util" ];
   Hashtbl.replace deps "util" [];
-  match build_graph ~root_dir:"/tmp/project" ~modules ~dependencies:deps ~entry_module:"main" with
+  match build_graph ~root_dir:"/tmp/project" ~modules ~dependencies:deps ~entry_module:"main" () with
   | Error _ -> false
   | Ok graph -> graph.root_dir = "/tmp/project" && graph.topo_order = [ "util"; "math"; "main" ]
 
@@ -127,7 +130,7 @@ let%test "build_graph reports cycle path" =
   Hashtbl.replace deps "main" [ "a" ];
   Hashtbl.replace deps "a" [ "b" ];
   Hashtbl.replace deps "b" [ "a" ];
-  match build_graph ~root_dir:"/tmp/project" ~modules ~dependencies:deps ~entry_module:"main" with
+  match build_graph ~root_dir:"/tmp/project" ~modules ~dependencies:deps ~entry_module:"main" () with
   | Ok _ -> false
   | Error diag ->
       diag.code = "module-cycle" && String.equal diag.message "Circular module dependency: a -> b -> a"

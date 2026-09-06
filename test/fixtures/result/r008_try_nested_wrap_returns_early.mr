@@ -1,0 +1,42 @@
+# R008: nested try wrap preserves typed causes and returns before later statements
+type FileError = {
+  Missing = "Missing file",
+}
+
+type ConfigError = {
+  File(FileError) = "Config load failed",
+}
+
+type ControllerError = {
+  Config(ConfigError) = "Controller load failed",
+}
+
+fn read_file(ok: Bool) -> Result[Str, FileError] = {
+  if (ok) {
+    Result.Success("file")
+  } else {
+    Result.Failure(FileError.Missing)
+  }
+}
+
+fn load_config(ok: Bool) -> Result[Str, ConfigError] = {
+  let text = try read_file(ok) wrap ConfigError.File
+  Result.Success(text + "-config")
+}
+
+fn load_controller(ok: Bool) => Result[Str, ControllerError] = {
+  let config = try load_config(ok) wrap ControllerError.Config
+  puts("continued")  # output: continued
+  Result.Success(config + "-controller")
+}
+
+match load_controller(true) {
+  case Result.Success(value): puts(value)  # output: file-config-controller
+  case Result.Failure(_): puts("unexpected")
+}
+
+match load_controller(false) {
+  case Result.Success(_): puts("unexpected")
+  case Result.Failure(ControllerError.Config(ConfigError.File(FileError.Missing))): puts("nested")  # output: nested
+  case Result.Failure(_): puts("unexpected")
+}

@@ -1,0 +1,9 @@
+import std.bytes
+
+fn apply(make, value) = make(value)
+
+let make_bytes = bytes.from_str
+let render = bytes.to_str_lossy
+let payload = apply(make_bytes, "hi")
+
+puts(render(payload))

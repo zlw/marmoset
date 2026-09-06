@@ -1,0 +1,12 @@
+type Error = {
+  Boom = "Boom",
+}
+
+fn source() -> Result[Str, Error] = Result.Success("ok")
+
+fn bad() -> Str = {
+  source()  # error: unused Result
+  "done"
+}
+
+bad()

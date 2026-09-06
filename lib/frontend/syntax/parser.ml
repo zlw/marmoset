@@ -47,6 +47,29 @@ type string_interp_part =
   | StringText of string * int
   | StringExpr of Surface.surface_expr
 
+let unescape_string_text (content : string) : string =
+  let buffer = Buffer.create (String.length content) in
+  let rec loop idx =
+    if idx >= String.length content then
+      Buffer.contents buffer
+    else if content.[idx] = '\\' && idx + 1 < String.length content then (
+      let escaped =
+        match content.[idx + 1] with
+        | 'n' -> '\n'
+        | 'r' -> '\r'
+        | 't' -> '\t'
+        | '"' -> '"'
+        | '\\' -> '\\'
+        | other -> other
+      in
+      Buffer.add_char buffer escaped;
+      loop (idx + 2))
+    else (
+      Buffer.add_char buffer content.[idx];
+      loop (idx + 1))
+  in
+  loop 0
+
 let first_some a b =
   match a with
   | Some _ -> a
@@ -59,6 +82,29 @@ let current_name_ref (p : parser) : Surface.name_ref = name_ref_of_token p p.cur
 
 let name_texts (refs : Surface.name_ref list) : string list =
   List.map (fun (ref_ : Surface.name_ref) -> ref_.text) refs
+
+let effect_of_arrow_token (token_type : Token.token_type) : AST.effect_annotation option =
+  match token_type with
+  | Token.Arrow -> Some AST.Pure
+  | Token.FatArrow -> Some AST.Effectful
+  | Token.TildeArrow -> Some AST.EffectPoly
+  | _ -> None
+
+let token_is_effect_arrow (token_type : Token.token_type) : bool =
+  Option.is_some (effect_of_arrow_token token_type)
+
+let combine_name_refs (refs : Surface.name_ref list) : Surface.name_ref =
+  match refs with
+  | [] -> invalid_arg "combine_name_refs"
+  | first :: rest ->
+      let last = List.fold_left (fun _ ref_ -> ref_) first rest in
+      Surface.
+        {
+          text = String.concat "." (List.map (fun (ref_ : name_ref) -> ref_.text) refs);
+          pos = first.pos;
+          end_pos = last.end_pos;
+          file_id = first.file_id;
+        }
 
 let with_surface_type_end p (te : Surface.surface_type_expr) : Surface.surface_type_expr =
   Surface.
@@ -141,7 +187,9 @@ let prec_prefix = 9 (* ! - (prefix) *)
 let prec_call = 10 (* f(args) *)
 let prec_index = 11 (* a[i] a.b *)
 
-let precedences = function
+let token_precedence (t : Token.token) : precedence =
+  match t.token_type with
+  | Token.Ident when t.literal = "wrap" -> prec_pipe
   | Token.PipeForward -> prec_pipe
   | Token.PipePipe -> prec_or
   | Token.AmpAmp -> prec_and
@@ -154,8 +202,8 @@ let precedences = function
   | Token.Dot -> prec_index (* Same precedence as indexing *)
   | _ -> prec_lowest
 
-let peek_precedence (p : parser) : precedence = precedences p.peek_token.token_type
-let curr_precedence (p : parser) : precedence = precedences p.curr_token.token_type
+let peek_precedence (p : parser) : precedence = token_precedence p.peek_token
+let curr_precedence (p : parser) : precedence = token_precedence p.curr_token
 
 let next_token (p : parser) : parser =
   let curr_token = p.peek_token in
@@ -266,7 +314,8 @@ let concat_string_parts (p : parser) (parts : string_interp_part list) : Surface
   let lower_part = function
     | StringText (text, pos) ->
         let end_pos = max pos (pos + String.length text - 1) in
-        synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos (Surface.SEString text)
+        synth_expr ~file_id:p.file_id ~id:(fresh_id p) ~pos ~end_pos
+          (Surface.SEString (unescape_string_text text))
     | StringExpr expr -> wrap_expr_with_show_call p expr
   in
   match
@@ -338,6 +387,11 @@ and parse_top_decl (p : parser) : (parser * Surface.top_decl, parser) result =
   match p.curr_token.token_type with
   | Token.Export -> parse_export_decl p
   | Token.Import -> parse_import_decl p
+  | Token.Extern ->
+      if peek_token_is p Token.Type then
+        parse_extern_type_definition p
+      else
+        parse_extern_block p
   | Token.Let -> parse_let_top p
   | Token.Return -> parse_return_top p
   | Token.Enum -> parse_enum_definition p
@@ -406,6 +460,181 @@ and parse_import_decl (p : parser) : (parser * Surface.top_decl, parser) result 
   else
     Ok (p3, Surface.SImportDecl { import_path; import_path_refs; import_alias = None; import_alias_ref = None })
 
+and valid_extern_identifier (name : string) : bool =
+  String.length name > 0
+  && (not (String.ends_with ~suffix:"?" name))
+  && (not (String.ends_with ~suffix:"!" name))
+  &&
+  match String.get name 0 with
+  | 'A' .. 'Z' | 'a' .. 'z' | '_' ->
+      String.for_all
+        (function
+          | 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' | '_' -> true
+          | _ -> false)
+        name
+  | _ -> false
+
+and valid_extern_function_identifier (name : string) : bool =
+  let base =
+    if String.ends_with ~suffix:"?" name || String.ends_with ~suffix:"!" name then
+      String.sub name 0 (String.length name - 1)
+    else
+      name
+  in
+  valid_extern_identifier base
+
+and default_extern_qualifier (path : string) : string option =
+  match List.rev (String.split_on_char '/' path) with
+  | segment :: _ when valid_extern_identifier segment -> Some segment
+  | _ -> None
+
+and parse_extern_param (p : parser) : (parser * Surface.surface_extern_param, parser) result =
+  if not (curr_token_is p Token.Ident) then
+    Error (add_error ~code:"parse-extern-signature" p "extern parameters must be named")
+  else
+    let sep_name_ref = current_name_ref p in
+    let* p2 =
+      if peek_token_is p Token.Colon then
+        Ok (next_token p)
+      else
+        Error (add_error ~code:"parse-extern-signature" p "extern parameters require type annotations")
+    in
+    let* p3, sep_type = parse_type_expr (next_token p2) in
+    Ok (p3, Surface.{ sep_name = sep_name_ref.text; sep_name_ref; sep_type })
+
+and parse_extern_params (p : parser) : (parser * Surface.surface_extern_param list, parser) result =
+  if peek_token_is p Token.RParen then
+    Ok (next_token p, [])
+  else
+    let rec loop (lp : parser) (rev_params : Surface.surface_extern_param list) =
+      let* lp2, param = parse_extern_param lp in
+      if curr_token_is lp2 Token.Comma then
+        loop (next_token lp2) (param :: rev_params)
+      else if curr_token_is lp2 Token.RParen then
+        Ok (lp2, List.rev (param :: rev_params))
+      else
+        Error (add_error ~code:"parse-extern-signature" lp2 "expected ',' or ')' after extern parameter")
+    in
+    loop (next_token p) []
+
+and parse_extern_fn_sig (p : parser) : (parser * Surface.surface_extern_fn_sig, parser) result =
+  let sef_pos = p.curr_token.pos in
+  let* p2 = expect_peek p Token.Ident in
+  let sef_name_ref = current_name_ref p2 in
+  if not (valid_extern_function_identifier sef_name_ref.text) then
+    Error
+      (add_error ~code:"parse-extern-signature" ~token:p2.curr_token p2
+         "extern function names must be valid function identifiers")
+  else if peek_token_is p2 Token.LBracket then
+    Error
+      (add_error ~code:"parse-extern-signature" ~token:p2.peek_token p2
+         "extern functions cannot declare generics in v1")
+  else
+    let* p3 = expect_peek p2 Token.LParen in
+    let* p4, sef_params = parse_extern_params p3 in
+    let* p5, sef_effectful =
+      if peek_token_is p4 Token.Arrow then
+        Ok (next_token p4, false)
+      else if peek_token_is p4 Token.FatArrow then
+        Ok (next_token p4, true)
+      else
+        Error
+          (add_error ~code:"parse-extern-signature" p4
+             "extern function signatures require an explicit return arrow")
+    in
+    let* p6, sef_return_type = parse_type_expr (next_token p5) in
+    let sef_end_pos = max sef_pos (token_end p6.curr_token) in
+    Ok
+      ( p6,
+        Surface.
+          {
+            sef_name = sef_name_ref.text;
+            sef_name_ref;
+            sef_params;
+            sef_return_type;
+            sef_effectful;
+            sef_pos;
+            sef_end_pos;
+          } )
+
+and parse_extern_block (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p2 =
+    if peek_token_is p Token.String then
+      Ok (next_token p)
+    else
+      Error (add_error ~code:"parse-extern-signature" p "extern requires a quoted shim id")
+  in
+  let seb_shim_id_ref = current_name_ref p2 in
+  let seb_shim_id = p2.curr_token.literal in
+  let* p3, seb_alias, seb_alias_ref =
+    if peek_token_is p2 Token.As then
+      let* p_alias = expect_peek (next_token p2) Token.Ident in
+      let alias_ref = current_name_ref p_alias in
+      if valid_extern_identifier alias_ref.text then
+        Ok (p_alias, Some alias_ref.text, Some alias_ref)
+      else
+        Error
+          (add_error ~code:"parse-extern-signature" ~token:p_alias.curr_token p_alias
+             "extern aliases must be plain identifiers")
+    else
+      Ok (p2, None, None)
+  in
+  let* seb_qualifier =
+    match seb_alias with
+    | Some alias -> Ok alias
+    | None -> (
+        match default_extern_qualifier seb_shim_id with
+        | Some qualifier -> Ok qualifier
+        | None ->
+            Error
+              (add_error ~code:"parse-extern-signature" p3
+                 "extern shim id requires an explicit plain identifier alias"))
+  in
+  let* p4 =
+    if peek_token_is p3 Token.Assign then
+      Ok (next_token p3)
+    else
+      Error (add_error ~code:"parse-extern-signature" p3 "extern blocks require '=' before the body")
+  in
+  let* p5 = expect_peek p4 Token.LBrace in
+  let rec loop (lp : parser) (rev_fns : Surface.surface_extern_fn_sig list) =
+    if curr_token_is lp Token.RBrace then
+      Ok (lp, List.rev rev_fns)
+    else if curr_token_is lp Token.EOF then
+      Error (add_error ~code:"parse-extern-signature" lp "unterminated extern block")
+    else if curr_token_is lp Token.Function then
+      let* lp2, fn_sig = parse_extern_fn_sig lp in
+      let lp3 =
+        if curr_token_is lp2 Token.Semicolon then
+          next_token lp2
+        else
+          lp2
+      in
+      loop lp3 (fn_sig :: rev_fns)
+    else
+      Error (add_error ~code:"parse-extern-signature" lp "expected extern function signature")
+  in
+  let* p6, seb_fns = loop (next_token p5) [] in
+  Ok
+    ( p6,
+      Surface.SExternBlock
+        Surface.{ seb_shim_id; seb_shim_id_ref; seb_alias; seb_alias_ref; seb_qualifier; seb_fns } )
+
+and parse_extern_type_definition (p : parser) : (parser * Surface.top_decl, parser) result =
+  let* p_type = expect_peek p Token.Type in
+  let* p_name = expect_peek p_type Token.Ident in
+  if peek_token_is p_name Token.LBracket then
+    Error
+      (add_error ~code:"parse-extern-type" ~token:p_name.peek_token p_name
+         "extern type declarations do not support type parameters")
+  else if peek_token_is p_name Token.Derive && not (token_starts_line p_name p_name.peek_token) then
+    Error
+      (add_error ~code:"parse-extern-type" ~token:p_name.peek_token p_name
+         "extern type declarations cannot derive traits")
+  else
+    let extern_type_name_ref = current_name_ref p_name in
+    Ok (p_name, Surface.SExternTypeDef { extern_type_name = extern_type_name_ref.text; extern_type_name_ref })
+
 (* Phase 1b: vNext top-level fn declaration: fn name[generics](params) -> T = expr_or_block *)
 and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result =
   (* curr_token = 'fn', peek = Ident *)
@@ -420,18 +649,14 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
   (* Parameters with optional type annotations *)
   let* p5, params = parse_function_parameters p4 in
 
-  (* Optional return type: -> T (pure) or => T (effectful) *)
-  let* p6, return_type, is_effectful =
-    if peek_token_is p5 Token.Arrow then
-      let p6 = next_token p5 in
-      let* p7, te = parse_type_expr (next_token p6) in
-      Ok (p7, Some te, false)
-    else if peek_token_is p5 Token.FatArrow then
-      let p6 = next_token p5 in
-      let* p7, te = parse_type_expr (next_token p6) in
-      Ok (p7, Some te, true)
-    else
-      Ok (p5, None, false)
+  (* Optional return type: -> T (pure), => T (effectful), or ~> T (effect-polymorphic) *)
+  let* p6, return_type, effect =
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect ->
+        let p6 = next_token p5 in
+        let* p7, te = parse_type_expr (next_token p6) in
+        Ok (p7, Some te, effect)
+    | None -> Ok (p5, None, AST.Pure)
   in
 
   (* Expect = *)
@@ -462,7 +687,7 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
       Ok (p9, Surface.SEOBExpr expr)
   in
 
-  Ok (p8, Surface.SFnDecl { name; name_ref; generics; params; return_type; is_effectful; body })
+  Ok (p8, Surface.SFnDecl { name; name_ref; generics; params; return_type; effect; body })
 
 and parse_block_stmt (p : parser) : (parser * Surface.surface_stmt, parser) result =
   let finalize = function
@@ -538,28 +763,27 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       in
       let* p3, params = collect_params p2 [ first ] in
       let p4 = next_token p3 in
-      let is_effectful = curr_token_is p4 Token.FatArrow in
-      if curr_token_is p4 Token.Arrow || is_effectful then
-        let* p5, return_type = parse_type_expr (next_token p4) in
-        Ok
-          ( p5,
-            with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, is_effectful))) )
-      else
-        Error (peek_error p3 Token.Arrow)
+      match effect_of_arrow_token p4.curr_token.token_type with
+      | Some effect ->
+          let* p5, return_type = parse_type_expr (next_token p4) in
+          Ok
+            ( p5,
+              with_surface_type_end p5
+                (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, effect))) )
+      | None -> Error (peek_error p3 Token.Arrow)
     else if curr_token_is p2 Token.RParen then
       (* Single type in parens: (Int) or (Int | Str) *)
       let p3 = next_token p2 in
-      if curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow then
-        let is_effectful = curr_token_is p3 Token.FatArrow in
-        let* p5, return_type = parse_type_expr (next_token p3) in
-        Ok
-          ( p5,
-            with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, is_effectful))) )
-      else
-        (* Just grouping: (Int) or (Int | Str) *)
-        Ok (p3, first)
+      match effect_of_arrow_token p3.curr_token.token_type with
+      | Some effect ->
+          let* p5, return_type = parse_type_expr (next_token p3) in
+          Ok
+            ( p5,
+              with_surface_type_end p5
+                (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, effect))) )
+      | None ->
+          (* Just grouping: (Int) or (Int | Str) *)
+          Ok (p3, first)
     else
       Error (peek_error p2 Token.RParen)
   else if curr_token_is p Token.LBrace then
@@ -843,6 +1067,27 @@ and parse_type_param_list (p : parser) : (parser * Surface.name_ref list, parser
   loop p []
 
 and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list, parser) result =
+  let invalid_variant_message ?token lp msg =
+    Error (add_error ~code:"parse-invalid-variant-message" ?token lp msg)
+  in
+  let parse_variant_message lp =
+    if curr_token_is lp Token.Assign then
+      let message_parser = next_token lp in
+      if curr_token_is message_parser Token.String then
+        let message = message_parser.curr_token.literal in
+        if contains_interpolation_marker message then
+          invalid_variant_message message_parser "variant messages must be static string literals"
+        else
+          let after_message = next_token message_parser in
+          if curr_token_is after_message Token.Comma || curr_token_is after_message Token.RBrace then
+            Ok (after_message, Some message)
+          else
+            invalid_variant_message after_message "variant messages must be a single string literal"
+      else
+        invalid_variant_message message_parser "variant messages must be string literals"
+    else
+      Ok (lp, None)
+  in
   let rec loop lp variants =
     if curr_token_is lp Token.RBrace then
       Ok (lp, List.rev variants)
@@ -852,26 +1097,32 @@ and parse_variant_list (p : parser) : (parser * Surface.surface_variant_def list
       (* Check for variant data: some(a) *)
       let* lp3, sv_fields =
         if curr_token_is lp2 Token.LParen then
-          let* lp3, fields = parse_type_expr_list (next_token lp2) in
-          let* lp4 =
-            if curr_token_is lp3 Token.RParen then
-              Ok lp3
-            else
-              expect_peek lp3 Token.RParen
-          in
-          Ok (next_token lp4, fields)
+          let field_start = next_token lp2 in
+          if curr_token_is field_start Token.String then
+            invalid_variant_message field_start
+              "variant messages belong after the payload as '= \"message\"', not inside payload parentheses"
+          else
+            let* lp3, fields = parse_type_expr_list field_start in
+            let* lp4 =
+              if curr_token_is lp3 Token.RParen then
+                Ok lp3
+              else
+                expect_peek lp3 Token.RParen
+            in
+            Ok (next_token lp4, fields)
         else
           Ok (lp2, [])
       in
-      let variant = Surface.{ sv_name = sv_name_ref.text; sv_name_ref; sv_fields } in
+      let* lp4, sv_message = parse_variant_message lp3 in
+      let variant = Surface.{ sv_name = sv_name_ref.text; sv_name_ref; sv_fields; sv_message } in
       (* Skip optional comma between variants *)
-      let lp4 =
-        if curr_token_is lp3 Token.Comma then
-          next_token lp3
+      let lp5 =
+        if curr_token_is lp4 Token.Comma then
+          next_token lp4
         else
-          lp3
+          lp4
       in
-      loop lp4 (variant :: variants)
+      loop lp5 (variant :: variants)
     else
       Error (no_prefix_parse_fn_error lp lp.curr_token.token_type)
   in
@@ -983,7 +1234,11 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
         expect_peek p_payload_end Token.RParen
     in
     match payload_types with
-    | [ wrapper_body ] ->
+    | [] ->
+        Error
+          (add_error ~code:"parse-invalid-type-definition" p_body
+             (Printf.sprintf "Wrapper type '%s' expects at least one payload type" type_name))
+    | wrapper_bodies ->
         let* p6, derive = parse_postfix_derive p_after_paren in
         Ok
           ( p6,
@@ -993,13 +1248,9 @@ and parse_type_definition (p : parser) : (parser * Surface.top_decl, parser) res
                 type_name_ref;
                 type_type_params;
                 type_type_param_refs;
-                type_body = Surface.STNamedWrapper wrapper_body;
+                type_body = Surface.STNamedWrapper wrapper_bodies;
                 derive;
               } )
-    | _ ->
-        Error
-          (add_error ~code:"parse-invalid-type-definition" p_body
-             (Printf.sprintf "Wrapper type '%s' expects exactly one payload type" type_name))
   else if curr_token_is p_body Token.LBrace then
     let p_members = next_token p_body in
     if
@@ -1056,18 +1307,20 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
   let name = p2.curr_token.literal in
   let name_ref = current_name_ref p2 in
 
-  (* Parse optional type parameter: [a] *)
-  let* p3, type_param_ref =
+  (* Parse optional type parameters: [a] or [reader, error] *)
+  let* p3, type_param_refs =
     if peek_token_is p2 Token.LBracket then
-      let* p3 = expect_peek p2 Token.LBracket in
-      let* p4 = expect_peek p3 Token.Ident in
-      let type_param = Some (current_name_ref p4) in
-      let* p5 = expect_peek p4 Token.RBracket in
-      Ok (p5, type_param)
+      parse_type_param_list (next_token (next_token p2))
     else
-      Ok (next_token p2, None)
+      Ok (next_token p2, [])
+  in
+  let type_param_ref =
+    match type_param_refs with
+    | [] -> None
+    | first :: _ -> Some first
   in
   let type_param = Option.map (fun (ref_ : Surface.name_ref) -> ref_.text) type_param_ref in
+  let type_params = name_texts type_param_refs in
 
   (* Parse optional supertraits: : Eq or : Eq & Show *)
   let* p4, supertrait_refs =
@@ -1105,7 +1358,20 @@ and parse_trait_definition (p : parser) : (parser * Surface.top_decl, parser) re
       expect_peek p7 Token.RBrace
   in
 
-  Ok (p8, Surface.STraitDef { name; name_ref; type_param; type_param_ref; supertraits; supertrait_refs; methods })
+  Ok
+    ( p8,
+      Surface.STraitDef
+        {
+          name;
+          name_ref;
+          type_param;
+          type_param_ref;
+          type_params;
+          type_param_refs;
+          supertraits;
+          supertrait_refs;
+          methods;
+        } )
 
 and parse_supertrait_list (p : parser) : (parser * Surface.name_ref list, parser) result =
   let rec loop lp rev_traits =
@@ -1171,14 +1437,11 @@ and parse_method_sig (p : parser) : (parser * Surface.surface_method_sig, parser
       expect_peek p4 Token.RParen
   in
 
-  (* Parse effect marker: -> (pure) or => (effectful) *)
+  (* Parse effect marker: -> (pure), => (effectful), or ~> (effect-polymorphic) *)
   let* p6, sm_effect =
-    if peek_token_is p5 Token.Arrow then
-      Ok (next_token p5, AST.Pure)
-    else if peek_token_is p5 Token.FatArrow then
-      Ok (next_token p5, AST.Effectful)
-    else
-      Result.map (fun p -> (p, AST.Pure)) (expect_peek p5 Token.Arrow)
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect -> Ok (next_token p5, effect)
+    | None -> Result.map (fun p -> (p, AST.Pure)) (expect_peek p5 Token.Arrow)
   in
 
   (* Parse return type *)
@@ -1409,16 +1672,13 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
       expect_peek p4 Token.RParen
   in
 
-  (* Parse optional effect marker + return type: -> T, => T, or neither *)
+  (* Parse optional effect marker + return type: -> T, => T, ~> T, or neither *)
   let* p6, smi_return_type, smi_effect =
-    if peek_token_is p5 Token.Arrow then
-      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type, Some AST.Pure)
-    else if peek_token_is p5 Token.FatArrow then
-      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type, Some AST.Effectful)
-    else
-      Ok (next_token p5, None, None)
+    match effect_of_arrow_token p5.peek_token.token_type with
+    | Some effect ->
+        let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
+        Ok (p6, Some ret_type, Some effect)
+    | None -> Ok (next_token p5, None, None)
   in
 
   (* Parse body: = expr_or_block *)
@@ -1514,6 +1774,7 @@ and prefixFn (p : parser) : (parser * Surface.surface_expr, parser) result =
   | Token.LParen -> parse_lambda_or_grouped p
   | Token.If -> parse_if_expression p
   | Token.Match -> parse_match_expression p
+  | Token.Try -> parse_try_expression p
   | Token.LBracket -> parse_array_literal p
   | Token.LBrace ->
       if is_block_body_start p then
@@ -1532,6 +1793,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
       &&
       match lp.peek_token.token_type with
       | Token.LParen | Token.LBracket -> true
+      | Token.Ident when lp.peek_token.literal = "wrap" -> true
       | Token.Dot -> false
       | _ -> false
     in
@@ -1541,6 +1803,7 @@ and infixFn (p : parser) (left_expr : Surface.surface_expr) (prec : precedence) 
         | Token.Plus | Token.Minus | Token.Slash | Token.Asterisk | Token.Eq | Token.NotEq | Token.Lt | Token.Gt
         | Token.Le | Token.Ge | Token.Is | Token.PipeForward | Token.PipePipe | Token.AmpAmp | Token.Percent ->
             parse_infix_expression (next_token lp) left
+        | Token.Ident when lp.peek_token.literal = "wrap" -> parse_wrap_expression (next_token lp) left
         | LParen -> parse_call_expression (next_token lp) left
         | LBracket -> parse_index_expression (next_token lp) left
         | Dot -> parse_dot_expression (next_token lp) left
@@ -1583,7 +1846,7 @@ and parse_string_literal (p : parser) : (parser * Surface.surface_expr, parser) 
   let content = p.curr_token.literal in
   if not (contains_interpolation_marker content) then
     let id = fresh_id p in
-    Ok (p, mk_surface_expr id pos (Surface.SEString content))
+    Ok (p, mk_surface_expr id pos (Surface.SEString (unescape_string_text content)))
   else
     let body_start_pos = pos + 1 in
     let* parts = split_string_interpolation_parts p content ~body_start_pos in
@@ -1704,6 +1967,32 @@ and parse_infix_expression (p : parser) (left : Surface.surface_expr) :
       let id = fresh_id p3 in
       Ok (p3, with_surface_expr_end p3 (mk_surface_expr id pos (Surface.SEInfix (left, op, right))))
 
+and parse_wrap_target (p_wrap : parser) : (parser * (Surface.name_ref * Surface.name_ref), parser) result =
+  let* p_first = expect_peek p_wrap Token.Ident in
+  let rec collect_segments lp rev_refs =
+    if peek_token_is lp Token.Dot then
+      let* p_next = expect_peek (next_token lp) Token.Ident in
+      collect_segments p_next (current_name_ref p_next :: rev_refs)
+    else
+      Ok (lp, List.rev rev_refs)
+  in
+  let* p_last, refs = collect_segments p_first [ current_name_ref p_first ] in
+  match List.rev refs with
+  | variant_ref :: rev_type_refs when rev_type_refs <> [] ->
+      let type_ref = combine_name_refs (List.rev rev_type_refs) in
+      Ok (p_last, (type_ref, variant_ref))
+  | _ -> Error (add_error ~code:"parse-invalid-wrap" p_first "expected wrap target in the form ErrorType.Variant")
+
+and parse_wrap_expression (p : parser) (left : Surface.surface_expr) :
+    (parser * Surface.surface_expr, parser) result =
+  let pos = left.Surface.se_pos in
+  let* p_target, target = parse_wrap_target p in
+  let id = fresh_id p_target in
+  Ok
+    ( p_target,
+      with_surface_expr_end p_target
+        (mk_surface_expr id pos (Surface.SEWrap { se_wrapped = left; se_wrap = target })) )
+
 and parse_boolean (p : parser) : (parser * Surface.surface_expr, parser) result =
   let pos = p.curr_token.pos in
   let id = fresh_id p in
@@ -1719,21 +2008,19 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
   (* p.curr_token = LParen *)
   (* Use Lexer.next_token to peek at the token after p.peek_token without advancing *)
   let _, peek2_tok = Lexer.next_token p.lexer in
-  (* Check for empty lambda: () -> expr or () => expr *)
-  let is_empty_lambda =
-    peek_token_is p Token.RParen && (peek2_tok.token_type = Token.Arrow || peek2_tok.token_type = Token.FatArrow)
-  in
+  (* Check for empty lambda: () -> expr, () => expr, or () ~> expr *)
+  let is_empty_lambda = peek_token_is p Token.RParen && token_is_effect_arrow peek2_tok.token_type in
   (* Check for multi-param or typed-param lambda: (a, b) -> or (a: T) -> *)
   let is_multi_or_typed =
     peek_token_is p Token.Ident && (peek2_tok.token_type = Token.Comma || peek2_tok.token_type = Token.Colon)
   in
   if is_empty_lambda then
-    (* () -> expr or () => expr *)
+    (* () -> expr, () => expr, or () ~> expr *)
     let p2 = next_token p in
     (* at ) *)
     let p3 = next_token p2 in
-    (* at -> or => *)
-    let is_effectful = curr_token_is p3 Token.FatArrow in
+    (* at ->, =>, or ~> *)
+    let effect = Option.value (effect_of_arrow_token p3.curr_token.token_type) ~default:AST.Pure in
     let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
     let id = fresh_id p4 in
     Ok
@@ -1741,20 +2028,17 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
         with_surface_expr_end p4
           (mk_surface_expr id pos
              (Surface.SEArrowLambda
-                {
-                  se_lambda_params = [];
-                  se_lambda_is_effectful = is_effectful;
-                  se_lambda_body = Surface.SEOBExpr body_expr;
-                })) )
+                { se_lambda_params = []; se_lambda_effect = effect; se_lambda_body = Surface.SEOBExpr body_expr }))
+      )
   else if is_multi_or_typed then
     (* Parse as explicit lambda params *)
     let* p2, lparams = parse_lambda_param_list (next_token p) in
     (* p2 should be at ) after params *)
     let p3 = next_token p2 in
-    (* past ) -> at -> or => *)
-    let is_effectful = curr_token_is p3 Token.FatArrow in
-    if not (curr_token_is p3 Token.Arrow || curr_token_is p3 Token.FatArrow) then
-      Error (add_error ~code:"parse-unexpected-token" p3 "expected '->' or '=>' after lambda params")
+    (* past ) -> at ->, =>, or ~> *)
+    let effect = effect_of_arrow_token p3.curr_token.token_type in
+    if Option.is_none effect then
+      Error (add_error ~code:"parse-unexpected-token" p3 "expected '->', '=>', or '~>' after lambda params")
     else
       let* p4, body_expr = parse_expression (next_token p3) prec_lowest in
       let id = fresh_id p4 in
@@ -1765,7 +2049,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
                (Surface.SEArrowLambda
                   {
                     se_lambda_params = lparams;
-                    se_lambda_is_effectful = is_effectful;
+                    se_lambda_effect = Option.get effect;
                     se_lambda_body = Surface.SEOBExpr body_expr;
                   })) )
   else
@@ -1773,12 +2057,12 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
     let* p2, expr = parse_expression (next_token p) prec_lowest in
     let* p3 = expect_peek p2 Token.RParen in
     (* Check for single-ident lambda: (x) -> expr *)
-    if peek_token_is p3 Token.Arrow || peek_token_is p3 Token.FatArrow then
+    if token_is_effect_arrow p3.peek_token.token_type then
       match expr.Surface.se_expr with
       | Surface.SEIdentifier name ->
           let p4 = next_token p3 in
-          (* at -> or => *)
-          let is_effectful = curr_token_is p4 Token.FatArrow in
+          (* at ->, =>, or ~> *)
+          let effect = Option.value (effect_of_arrow_token p4.curr_token.token_type) ~default:AST.Pure in
           let* p5, body_expr = parse_expression (next_token p4) prec_lowest in
           let id = fresh_id p5 in
           Ok
@@ -1789,7 +2073,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
                       {
                         se_lambda_params =
                           [ Surface.{ svp_name = name.text; svp_name_ref = name; svp_type = None } ];
-                        se_lambda_is_effectful = is_effectful;
+                        se_lambda_effect = effect;
                         se_lambda_body = Surface.SEOBExpr body_expr;
                       })) )
       | _ -> Ok (p3, expr)
@@ -2277,6 +2561,41 @@ and parse_match_expression (p : parser) : (parser * Surface.surface_expr, parser
   let id = fresh_id p5 in
   Ok (p5, with_surface_expr_end p5 (mk_surface_expr id pos (Surface.SEMatch (scrutinee, arms))))
 
+and parse_try_expression (p : parser) : (parser * Surface.surface_expr, parser) result =
+  let pos = p.curr_token.pos in
+  let* p_tried, tried = parse_expression (next_token p) prec_lowest in
+  let tried, parsed_wrap =
+    match tried.Surface.se_expr with
+    | Surface.SEWrap { se_wrapped; se_wrap } -> (se_wrapped, Some se_wrap)
+    | _ -> (tried, None)
+  in
+  let* p_end, wrap =
+    match parsed_wrap with
+    | Some wrap -> Ok (p_tried, Some wrap)
+    | None ->
+        if peek_token_is p_tried Token.Ident && p_tried.peek_token.literal = "wrap" then
+          let* p_wrap, target = parse_wrap_target (next_token p_tried) in
+          Ok (p_wrap, Some target)
+        else
+          Ok (p_tried, None)
+  in
+  let* p_end, fallback =
+    if peek_token_is p_end Token.Ident && p_end.peek_token.literal = "or" then
+      if Option.is_some wrap then
+        Error (add_error ~code:"parse-invalid-try-or" p_end "try cannot use both wrap and or")
+      else
+        let p_or = next_token p_end in
+        let* p_fallback, fallback = parse_expression (next_token p_or) prec_lowest in
+        Ok (p_fallback, Some fallback)
+    else
+      Ok (p_end, None)
+  in
+  let id = fresh_id p_end in
+  Ok
+    ( p_end,
+      with_surface_expr_end p_end
+        (mk_surface_expr id pos (Surface.SETry { se_tried = tried; se_wrap = wrap; se_fallback = fallback })) )
+
 and parse_match_arms (p : parser) : (parser * Surface.surface_match_arm list, parser) result =
   let rec loop lp arms =
     if curr_token_is lp Token.RBrace then
@@ -2472,7 +2791,10 @@ and parse_pattern (p : parser) : (parser * Surface.surface_pattern, parser) resu
         Error
           (add_error ~code:"parse-invalid-pattern" p "interpolated strings are not allowed in pattern position")
       else
-        Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LString p.curr_token.literal)))
+        Ok
+          ( p,
+            mk_surface_pat p.curr_token.pos
+              (Surface.SPLiteral (AST.LString (unescape_string_text p.curr_token.literal))) )
   | Token.True -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool true)))
   | Token.False -> Ok (p, mk_surface_pat p.curr_token.pos (Surface.SPLiteral (AST.LBool false)))
   | Token.LBrace -> parse_record_pattern p
@@ -2615,6 +2937,87 @@ let%test "imports must precede body statements" =
   | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
   | Ok _ -> false
 
+let%test "parse shim extern block with alias and effectful signature" =
+  match
+    parse ~file_id:"<test>"
+      "extern \"std/bytes\" as bytes = {\n\  fn read(path: Str) -> Str\n\  fn write!(root: Str) => Unit\n}"
+  with
+  | Ok
+      [
+        {
+          AST.stmt =
+            AST.ExternBlock
+              {
+                extern_shim_id = "std/bytes";
+                extern_alias = Some "bytes";
+                extern_qualifier = "bytes";
+                extern_fns =
+                  [
+                    {
+                      extern_fn_name = "read";
+                      extern_fn_params = [ { extern_param_name = "path"; extern_param_type = AST.TCon "Str" } ];
+                      extern_fn_return_type = AST.TCon "Str";
+                      extern_fn_effectful = false;
+                      _;
+                    };
+                    {
+                      extern_fn_name = "write!";
+                      extern_fn_params = [ { extern_param_name = "root"; extern_param_type = AST.TCon "Str" } ];
+                      extern_fn_return_type = AST.TCon "Unit";
+                      extern_fn_effectful = true;
+                      _;
+                    };
+                  ];
+              };
+          _;
+        };
+      ] ->
+      true
+  | _ -> false
+
+let%test "extern starts module body for header ordering" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nimport math" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-module-header-order") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing parameter annotation" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing equals before body" =
+  match parse ~file_id:"<test>" "extern \"strings\" { fn ToUpper(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects missing return arrow" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper(s: Str) Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects generic function signature" =
+  match parse ~file_id:"<test>" "extern \"strings\" = { fn ToUpper[a](s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects invalid derived qualifier without alias" =
+  match parse ~file_id:"<test>" "extern \"path/with-hyphen\" = { fn Base(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern rejects bang suffix aliases" =
+  match parse ~file_id:"<test>" "extern \"std/bytes\" as bytes! = { fn panic!(s: Str) -> Str }" with
+  | Error diags -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-extern-signature") diags
+  | Ok _ -> false
+
+let%test "extern accepts question and bang suffix function names" =
+  match
+    parse ~file_id:"<test>" "extern \"std/bytes\" = { fn exists?(s: Str) -> Bool fn write!(s: Str) => Unit }"
+  with
+  | Ok [ { AST.stmt = AST.ExternBlock { extern_fns = [ a; b ]; _ }; _ } ] ->
+      a.extern_fn_name = "exists?" && b.extern_fn_name = "write!"
+  | _ -> false
+
 module Test = struct
   type test = {
     input : string;
@@ -2631,7 +3034,7 @@ module Test = struct
   (* Helper for Function expressions with the new record structure *)
   let fn_expr params body =
     AST.Function
-      { origin = AST.DeclaredFunction; generics = None; params; return_type = None; is_effectful = false; body }
+      { origin = AST.DeclaredFunction; generics = None; params; return_type = None; effect = AST.Pure; body }
 
   let run (tests : test list) : bool =
     tests
@@ -2682,6 +3085,13 @@ module Test = struct
 
   let%test "test_string_literal_expressions" =
     [ { input = "\"hello world\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello world"))) ] } ] |> run
+
+  let%test "string literal escapes are decoded" =
+    [
+      { input = "\"hello\\nworld\";"; output = [ s (AST.ExpressionStmt (e (AST.String "hello\nworld"))) ] };
+      { input = "\"a\\\"b\";"; output = [ s (AST.ExpressionStmt (e (AST.String "a\"b"))) ] };
+    ]
+    |> run
 
   let%test "string interpolation lowers to show call plus concat" =
     match parse ~file_id:"<test>" "\"hello #{name}\";" with
@@ -3292,6 +3702,9 @@ module Test = struct
       | AST.Match (scrutinee, arms) ->
           collect_expr_ids scrutinee
           @ List.concat_map (fun (arm : AST.match_arm) -> collect_expr_ids arm.body) arms
+      | AST.Try { tried; fallback; _ } ->
+          collect_expr_ids tried @ (fallback |> Option.map collect_expr_ids |> Option.value ~default:[])
+      | AST.Wrap { wrapped; _ } -> collect_expr_ids wrapped
       | AST.RecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : AST.record_field) ->
@@ -3316,8 +3729,8 @@ module Test = struct
     | AST.Let { value; _ } -> collect_expr_ids value
     | AST.Return e | AST.ExpressionStmt e -> collect_expr_ids e
     | AST.Block stmts -> List.concat_map collect_stmt_ids stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
 
   let rec collect_surface_expr_ids (expr : Surface.surface_expr) : int list =
@@ -3349,6 +3762,10 @@ module Test = struct
           @ List.concat_map
               (fun (arm : Surface.surface_match_arm) -> collect_surface_expr_or_block_ids arm.se_arm_body)
               arms
+      | Surface.SETry { se_tried; se_fallback; _ } ->
+          collect_surface_expr_ids se_tried
+          @ (se_fallback |> Option.map collect_surface_expr_ids |> Option.value ~default:[])
+      | Surface.SEWrap { se_wrapped; _ } -> collect_surface_expr_ids se_wrapped
       | Surface.SERecordLit (fields, spread) -> (
           List.concat_map
             (fun (field : Surface.surface_record_field) ->
@@ -3383,7 +3800,7 @@ module Test = struct
 
   let collect_surface_top_stmt_ids (stmt : Surface.surface_top_stmt) : int list =
     match stmt.std_decl with
-    | Surface.SExportDecl _ | Surface.SImportDecl _ -> []
+    | Surface.SExportDecl _ | Surface.SImportDecl _ | Surface.SExternBlock _ | Surface.SExternTypeDef _ -> []
     | Surface.SLet { value; _ } -> collect_surface_expr_ids value
     | Surface.SFnDecl { body; _ } -> collect_surface_expr_or_block_ids body
     | Surface.STypeDef _ | Surface.SShapeDef _ | Surface.STraitDef _ | Surface.SAmbiguousImplDef _
@@ -3458,7 +3875,7 @@ module Test = struct
                           {
                             params = [ ("x", Some (AST.TCon "Int")) ];
                             return_type = Some (AST.TCon "Int");
-                            is_effectful = false;
+                            effect = AST.Pure;
                             _;
                           };
                       _;
@@ -3495,7 +3912,7 @@ module Test = struct
         [
           {
             AST.stmt =
-              AST.Let { name = "greet"; value = { AST.expr = AST.Function { is_effectful = true; _ }; _ }; _ };
+              AST.Let { name = "greet"; value = { AST.expr = AST.Function { effect = AST.Effectful; _ }; _ }; _ };
             _;
           };
         ] ->
@@ -3750,6 +4167,221 @@ module Test = struct
             List.map (fun (trait_ : Surface.surface_derive_trait) -> trait_.sdt_name) derive = [ "Eq"; "Show" ]
         | _ -> false)
 
+  let%test "parse error variant message on nullary constructor" =
+    let input = "type Error = { NotFound = \"File not found\" }" in
+    match parse_surface ~file_id:"<test>" input with
+    | Error _ -> false
+    | Ok result -> (
+        match result.program with
+        | [
+         {
+           Surface.std_decl =
+             Surface.STypeDef
+               {
+                 type_name = "Error";
+                 type_body =
+                   Surface.STNamedSum [ { sv_name = "NotFound"; sv_fields = []; sv_message = Some msg; _ } ];
+                 _;
+               };
+           _;
+         };
+        ] ->
+            msg = "File not found"
+        | _ -> false)
+
+  let%test "parse error variant message on payload constructor" =
+    let input = "type Error = { InvalidData(bytes.DecodeError) = \"File contains invalid data\" }" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.EnumDef
+                {
+                  variants =
+                    [
+                      {
+                        AST.variant_name = "InvalidData";
+                        variant_fields = [ AST.TCon "bytes.DecodeError" ];
+                        variant_message = Some msg;
+                      };
+                    ];
+                  _;
+                };
+            _;
+          };
+        ] ->
+        msg = "File contains invalid data"
+    | _ -> false
+
+  let%test "parse try expression without wrap" =
+    match parse_surface ~file_id:"<test>" "let value = try read()" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value = { Surface.se_expr = Surface.SETry { se_wrap = None; se_fallback = None; _ }; _ };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression with wrap target" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap ConfigError.File" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap = Some ({ Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ });
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression with qualified wrap target" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap file.Error.InvalidData" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap =
+                                  Some ({ Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ });
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse wrap expression with target" =
+    match parse_surface ~file_id:"<test>" "let result = read() wrap ConfigError.File" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SEWrap
+                              { se_wrap = { Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ }; _ };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse wrap expression with qualified target" =
+    match parse_surface ~file_id:"<test>" "let result = read() wrap file.Error.InvalidData" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SEWrap
+                              {
+                                se_wrap = { Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ };
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "wrap remains usable as an identifier at statement start" =
+    match
+      parse_surface ~file_id:"<test>"
+        "type Runner = ((Int) -> Str) -> ((Int) => Str)\nlet wrap: Runner = (f: (Int) -> Str) -> (n: Int) => f(n)\nwrap((n: Int) -> Show.show(n))(42)"
+    with
+    | Ok _ -> true
+    | Error _ -> false
+
+  let%test "ordinary enum variants remain message-less" =
+    match parse ~file_id:"<test>" "type Option[a] = { Some(a), None }" with
+    | Ok [ { AST.stmt = AST.EnumDef { variants; _ }; _ } ] ->
+        List.for_all (fun (variant : AST.variant_def) -> Option.is_none variant.variant_message) variants
+    | _ -> false
+
+  let%test "parse rejects non-string variant message" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound = 1 }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
+
+  let%test "parse rejects computed variant message" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound = \"a\" + \"b\" }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
+
+  let%test "parse rejects string payload parsed as variant field" =
+    match parse_surface ~file_id:"<test>" "type Error = { NotFound(\"x\") }" with
+    | Ok _ -> false
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-variant-message") errs
+
   let%test "parse enum rejects missing equals" =
     match parse ~file_id:"<test>" "enum Color { Red, Green }" with
     | Ok _ -> false
@@ -3798,6 +4430,42 @@ module Test = struct
         && derive_trait.derive_trait_name = "Show"
     | _ -> false
 
+  let%test "parse try expression with fallback" =
+    match parse_surface ~file_id:"<test>" "let value = try read() or 5" with
+    | Ok
+        {
+          program =
+            [
+              {
+                Surface.std_decl =
+                  Surface.SLet
+                    {
+                      value =
+                        {
+                          Surface.se_expr =
+                            Surface.SETry
+                              {
+                                se_wrap = None;
+                                se_fallback = Some { Surface.se_expr = Surface.SEInteger 5L; _ };
+                                _;
+                              };
+                          _;
+                        };
+                      _;
+                    };
+                _;
+              };
+            ];
+          _;
+        } ->
+        true
+    | _ -> false
+
+  let%test "parse try expression rejects wrap and or together" =
+    match parse_surface ~file_id:"<test>" "let value = try read() wrap ConfigError.File or 5" with
+    | Error errs -> List.exists (fun (d : Diagnostic.t) -> d.code = "parse-invalid-try-or") errs
+    | _ -> false
+
   let%test "parse explicit wrapper type syntax" =
     let input = "type UserId = UserId(Int)" in
     match parse ~file_id:"<test>" input with
@@ -3806,7 +4474,30 @@ module Test = struct
           {
             AST.stmt =
               AST.TypeDef
-                { type_name = "UserId"; type_type_params = []; type_body = AST.NamedTypeWrapper (AST.TCon "Int") };
+                {
+                  type_name = "UserId";
+                  type_type_params = [];
+                  type_body = AST.NamedTypeWrapper [ AST.TCon "Int" ];
+                };
+            _;
+          };
+        ] ->
+        true
+    | _ -> false
+
+  let%test "parse explicit multi-payload wrapper type syntax" =
+    let input = "type Entry = Entry(Path, Kind)" in
+    match parse ~file_id:"<test>" input with
+    | Ok
+        [
+          {
+            AST.stmt =
+              AST.TypeDef
+                {
+                  type_name = "Entry";
+                  type_type_params = [];
+                  type_body = AST.NamedTypeWrapper [ AST.TCon "Path"; AST.TCon "Kind" ];
+                };
             _;
           };
         ] ->
@@ -3882,6 +4573,7 @@ module Test = struct
                   impl_trait_name = "Show";
                   impl_type_params = [ { AST.name = "a"; constraints = [] } ];
                   impl_for_type = AST.TApp ("Option", [ AST.TVar "a" ]);
+                  impl_trait_args = [ AST.TApp ("Option", [ AST.TVar "a" ]) ];
                   impl_methods;
                 };
             _;
@@ -4013,7 +4705,7 @@ module Test = struct
         match result.program with
         | [ { Surface.std_decl = Surface.SExpressionStmt e; _ } ] -> (
             match e.se_expr with
-            | Surface.SEArrowLambda { se_lambda_is_effectful = true; _ } -> true
+            | Surface.SEArrowLambda { se_lambda_effect = AST.Effectful; _ } -> true
             | _ -> false)
         | _ -> false)
 
@@ -4058,6 +4750,17 @@ let%test "parse simple trait definition" =
           | _ -> false)
       | _ -> false)
   | Error _ -> false
+
+let%test "parse trait with multiple type parameters" =
+  let input = "trait Read[r, e] = { fn read(reader: r) -> Result[Str, e] }" in
+  let lexer = Lexer.init input in
+  match parse_program (init ~file_id:"<test>" lexer) with
+  | Ok (_p, [ { AST.stmt = AST.TraitDef trait_def; _ } ]) ->
+      trait_def.name = "Read"
+      && trait_def.type_param = Some "r"
+      && trait_def.type_params = [ "r"; "e" ]
+      && List.length trait_def.methods = 1
+  | _ -> false
 
 let%test "parse trait with multiple methods" =
   let input = "trait Num[a] = { fn add(x: a, y: a) -> a fn sub(x: a, y: a) -> a }" in
@@ -4495,7 +5198,7 @@ let%test "parse transparent type with function type body" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false) -> true
+              | AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure) -> true
               | _ -> false)
           | _ -> false)
       | _ -> false)
@@ -4580,7 +5283,8 @@ let%test "parse type intersection parenthesizes function members" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", false); AST.TCon "Bool" ] ->
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", AST.Pure); AST.TCon "Bool" ]
+                ->
                   true
               | _ -> false)
           | _ -> false)
@@ -4598,7 +5302,8 @@ let%test "parse function parameter annotation with function type" =
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
               | [
-               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", false))); ("x", Some (AST.TCon "Int"));
+               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure)));
+               ("x", Some (AST.TCon "Int"));
               ] ->
                   true
               | _ -> false)

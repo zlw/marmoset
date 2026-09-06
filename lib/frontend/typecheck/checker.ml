@@ -16,8 +16,13 @@ type typecheck_result = {
   type_map : Infer.type_map; (* Map from expression IDs to their inferred types *)
   symbol_table : (Infer.symbol_id * Infer.symbol) list;
   identifier_symbols : (int * Infer.symbol_id) list;
-  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+  call_resolution_map : (int, Resolution_artifacts.call_resolution) Hashtbl.t;
       (* Phase 5: Explicit call-resolution metadata for emitter *)
+  extern_declarations : (string, Resolution_artifacts.extern_func) Hashtbl.t;
+      (* Shim extern declarations keyed by shim id/function identity *)
+  extern_calls : (int, Resolution_artifacts.extern_call) Hashtbl.t;
+      (* Shim extern call artifacts keyed by expression id *)
+  extern_func_refs : (int, string) Hashtbl.t; (* Shim extern function-value references keyed by expression id *)
   method_def_map : (int, Resolution_artifacts.typed_method_def) Hashtbl.t;
       (* Phase 5.4: Typed method definitions for emitter. Populated during Phase 6. *)
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
@@ -61,7 +66,10 @@ let make_typecheck_result
     ~(result_type : mono_type)
     ~(environment : Infer.type_env)
     ~(type_map : Infer.type_map) : typecheck_result =
-  let call_resolution_map = Infer.snapshot_method_resolution_store () in
+  let call_resolution_map = Infer.snapshot_call_resolution_store () in
+  let extern_declarations = Extern_registry.snapshot_declarations () in
+  let extern_calls = Extern_registry.snapshot_calls () in
+  let extern_func_refs = Extern_registry.snapshot_func_refs () in
   let method_def_map = Infer.snapshot_method_def_store () in
   let method_type_args_map = Infer.snapshot_method_type_args_store () in
   let trait_object_coercion_map = Infer.snapshot_trait_object_coercion_store () in
@@ -76,6 +84,9 @@ let make_typecheck_result
     symbol_table;
     identifier_symbols;
     call_resolution_map;
+    extern_declarations;
+    extern_calls;
+    extern_func_refs;
     method_def_map;
     method_type_args_map;
     trait_object_coercion_map;
@@ -124,7 +135,10 @@ let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type
   if Annotation.check_annotation annotated_type inferred_type then
     true
   else if
-    Infer.mono_type_contains_intersection annotated_type || Infer.mono_type_contains_intersection inferred_type
+    Infer.has_unresolved_var annotated_type
+    || Infer.has_unresolved_var inferred_type
+    || Infer.mono_type_contains_intersection annotated_type
+    || Infer.mono_type_contains_intersection inferred_type
   then
     match Unify.unify inferred_type annotated_type with
     | Ok _ -> true
@@ -134,14 +148,16 @@ let annotation_matches_inferred_type (annotated_type : mono_type) (inferred_type
 
 (* Check if a let binding's annotation matches its inferred type *)
 let check_let_annotation
-    (name : string) (annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
-    (unit, Diagnostic.t) result =
+    ?(type_bindings = [])
+    (name : string)
+    (annotation : Syntax.Ast.AST.type_expr option)
+    (inferred_type : mono_type) : (unit, Diagnostic.t) result =
   match annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      match Annotation.type_expr_to_mono_type type_annot with
+      match Annotation.type_expr_to_mono_type_with type_bindings type_annot with
       | Error d -> Error d
       | Ok annotated_type ->
           if annotation_matches_inferred_type annotated_type inferred_type then
@@ -155,14 +171,15 @@ let check_let_annotation
                       (Annotation.format_mono_type inferred_type))))
 
 (* Check if a function expression's return type annotation matches its inferred type *)
-let check_function_annotation (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
+let check_function_annotation
+    ?(type_bindings = []) (return_annotation : Syntax.Ast.AST.type_expr option) (inferred_type : mono_type) :
     (unit, Diagnostic.t) result =
   match return_annotation with
   | None ->
       (* No annotation, nothing to check *)
       Ok ()
   | Some type_annot -> (
-      match Annotation.type_expr_to_mono_type type_annot with
+      match Annotation.type_expr_to_mono_type_with type_bindings type_annot with
       | Error d -> Error d
       | Ok annotated_return_type ->
           let rec extract_return_type (t : mono_type) : mono_type =
@@ -197,7 +214,8 @@ let check_program_with_annotations
   | Error e -> Error (merge_diagnostics e)
   | Ok (final_env, type_map, result_type) -> (
       (* Phase 2: Validate annotations against inferred types *)
-      let rec check_stmts_with_infer (stmts : Syntax.Ast.AST.statement list) : (unit, Diagnostic.t) result =
+      let rec check_stmts_with_infer ?(type_bindings = []) (stmts : Syntax.Ast.AST.statement list) :
+          (unit, Diagnostic.t) result =
         match stmts with
         | [] -> Ok ()
         | stmt :: rest -> (
@@ -221,25 +239,27 @@ let check_program_with_annotations
                               let_binding.name let_binding.value.id))
                 | Some mono_type -> (
                     (* Check let binding annotation *)
-                    match check_let_annotation let_binding.name let_binding.type_annotation mono_type with
+                    match
+                      check_let_annotation ~type_bindings let_binding.name let_binding.type_annotation mono_type
+                    with
                     | Error e -> Error e
                     | Ok () -> (
                         (* Also check function expression annotation if present *)
-                        match check_expr_annotations let_binding.value mono_type with
+                        match check_expr_annotations ~type_bindings let_binding.value mono_type with
                         | Error e -> Error e
-                        | Ok () -> check_stmts_with_infer rest)))
+                        | Ok () -> check_stmts_with_infer ~type_bindings rest)))
             | Syntax.Ast.AST.Block nested_stmts -> (
                 (* Recursively check block statements *)
-                match check_stmts_with_infer nested_stmts with
+                match check_stmts_with_infer ~type_bindings nested_stmts with
                 | Error e -> Error e
-                | Ok () -> check_stmts_with_infer rest)
+                | Ok () -> check_stmts_with_infer ~type_bindings rest)
             | _ ->
                 (* Other statements don't have annotations to check *)
-                check_stmts_with_infer rest)
-      and check_expr_annotations (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
+                check_stmts_with_infer ~type_bindings rest)
+      and check_expr_annotations ?(type_bindings = []) (expr : Syntax.Ast.AST.expression) (inferred : mono_type) :
           (unit, Diagnostic.t) result =
         match expr.expr with
-        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; is_effectful = _; _ } -> (
+        | Syntax.Ast.AST.Function { return_type; params = _; body; generics; effect = _; _ } -> (
             (* For generic functions, skip the return annotation check: type_callable already
                validated it during inference with proper type variable bindings.
                The second-pass check here can't reproduce the fresh-var mapping. *)
@@ -248,17 +268,26 @@ let check_program_with_annotations
               | Some (_ :: _) -> true
               | _ -> false
             in
+            let function_type_bindings =
+              match generics with
+              | None -> type_bindings
+              | Some generics ->
+                  List.map
+                    (fun (generic : Syntax.Ast.AST.generic_param) -> (generic.name, TVar generic.name))
+                    generics
+                  @ type_bindings
+            in
             let annot_check =
               if has_generics then
                 Ok ()
               else
-                check_function_annotation return_type inferred
+                check_function_annotation ~type_bindings:function_type_bindings return_type inferred
             in
             match annot_check with
             | Error e -> Error e
             | Ok () ->
                 (* Also recursively check body statements *)
-                check_stmts_with_infer [ body ])
+                check_stmts_with_infer ~type_bindings:function_type_bindings [ body ])
         | _ -> Ok () (* Other expressions don't have annotations to check *)
       in
       match check_stmts_with_infer program with
@@ -991,6 +1020,15 @@ let%test "record match pattern typechecks" =
   | Ok { result_type = TInt; _ } -> true
   | _ -> false
 
+let%test "constructor-bearing wrapper pattern unwraps payload" =
+  Infer.reset_fresh_counter ();
+  let code =
+    "type Path = Path(Str)\nfn unwrap(path: Path) -> Str = match path { case Path(value): value }\nunwrap(Path(\"x\"))"
+  in
+  match check code with
+  | Ok { result_type = TString; _ } -> true
+  | _ -> false
+
 let%test "or-pattern alternatives must bind the same names" =
   Infer.reset_fresh_counter ();
   let code =
@@ -1030,6 +1068,7 @@ let%test "env reuse with shared inference state preserves constrained generic ob
     {
       Trait_registry.trait_name = "Show";
       trait_type_param = Some "a";
+      trait_type_params = [ "a" ];
       trait_supertraits = [];
       trait_methods =
         [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TVar "a") ] ~return_type:TString () ];
@@ -1039,6 +1078,7 @@ let%test "env reuse with shared inference state preserves constrained generic ob
       impl_trait_name = "Show";
       impl_type_params = [];
       impl_for_type = TInt;
+      impl_trait_args = [ TInt ];
       impl_methods = [ Trait_registry.mk_method_sig ~name:"show" ~params:[ ("x", TInt) ] ~return_type:TString () ];
     };
   let shared_state = Infer.create_inference_state () in
@@ -1085,6 +1125,7 @@ let%test "Phase3: trait default method - impl without method succeeds if default
     {
       Trait_registry.trait_name = "greetable";
       trait_type_param = None;
+      trait_type_params = [];
       trait_supertraits = [];
       trait_methods =
         [
@@ -1102,7 +1143,13 @@ let%test "Phase3: trait default method - impl without method succeeds if default
     };
   (* Register an impl that does NOT provide the method (uses default) *)
   Trait_registry.register_impl ~builtin:true
-    { impl_trait_name = "greetable"; impl_type_params = []; impl_for_type = Types.TInt; impl_methods = [] };
+    {
+      impl_trait_name = "greetable";
+      impl_type_params = [];
+      impl_for_type = Types.TInt;
+      impl_trait_args = [ Types.TInt ];
+      impl_methods = [];
+    };
   (* Should be able to call greet on int via explicit qualification *)
   match check_string ~file_id:"<test>" "greetable.greet(1)" with
   | Ok result -> result.result_type = Types.TString
@@ -1330,30 +1377,25 @@ let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders in on
         diags
   | Ok _ -> false
 
-let%test "Phase6 prep: placeholder shorthand rejects effectful callback slots" =
+let%test "Phase6 prep: placeholder shorthand infers effectful callback slots" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match
     check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>"
       "fn foreach_list[a](items: List[a], f: (a) => Unit) => Unit = puts(\"x\")\nforeach_list([1, 2], puts(_))"
   with
-  | Error diags ->
-      List.exists
-        (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
-        diags
-  | Ok _ -> false
+  | Ok result -> result.result_type = Types.TNull
+  | Error _ -> false
 
-let%test "Phase6 prep: placeholder shorthand rejects effectful standalone sections" =
+let%test "Phase6 prep: placeholder shorthand infers effectful standalone sections" =
   Infer.reset_fresh_counter ();
   Trait_registry.clear ();
   match check_string ~env:(env_with_builtin_traits ()) ~file_id:"<test>" "let printer = puts(_)\nprinter" with
-  | Error diags ->
-      List.exists
-        (fun (d : Diagnostic.t) ->
-          d.code = "type-invalid-placeholder" && String_utils.contains_substring ~needle:"explicit '=>'" d.message)
-        diags
-  | Ok _ -> false
+  | Ok result -> (
+      match Types.canonicalize_mono_type result.result_type with
+      | Types.TFun (_, Types.TNull, Types.Effectful) -> true
+      | _ -> false)
+  | Error _ -> false
 
 let%test "Phase6 prep: placeholder shorthand rejects multiple placeholders across block bodies" =
   Infer.reset_fresh_counter ();
@@ -1774,3 +1816,270 @@ let%test "followup C2: intersections can flow to compatible member record annota
   match check_string ~file_id:"main.mr" code with
   | Ok result -> result.result_type = Types.TInt
   | Error _ -> false
+
+let%test "shim S2: checker snapshots std bytes shim declarations" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn to_str_lossy(input: Str) -> Str }" with
+  | Ok result -> (
+      match
+        Hashtbl.find_opt result.extern_declarations
+          (Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"to_str_lossy")
+      with
+      | Some func ->
+          func.source_qualifier = "bytes"
+          && func.shim_id = "std/bytes"
+          && func.param_names = [ "input" ]
+          && func.param_boundary_types = [ Shim_boundary.BStr ]
+          && func.return_boundary_type = Shim_boundary.BStr
+      | None -> false)
+  | Error _ -> false
+
+let%test "shim S2: checker rejects direct Go import style extern ids" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match check_string ~file_id:"strings" "extern \"strings\" = { fn ToUpper(s: Str) -> Str }" with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid") diags
+
+let%test "shim S2: checker rejects unsupported shim boundary type families" =
+  let cases =
+    [
+      "extern \"std/bytes\" = { fn bad(m: Map[Str, Int]) -> Str }";
+      "extern \"std/bytes\" = { fn bad(r: { name: Str }) -> Str }";
+      "extern \"std/bytes\" = { fn bad(x: Dyn[Show]) -> Str }";
+      "type Option[a] = { Some(a), None }\nextern \"std/bytes\" = { fn bad(x: Option[Int]) -> Str }";
+      "type Result[a, e] = { Success(a), Failure(e) }\nextern \"std/bytes\" = { fn bad(x: Result[Int, Str]) -> Str }";
+      "extern \"std/bytes\" = { fn bad(s: Str) -> Map[Str, Int] }";
+      "extern \"std/bytes\" = { fn bad(s: Str) -> { name: Str } }";
+      "extern \"std/bytes\" = { fn bad(s: Str) -> Dyn[Show] }";
+      "type Option[a] = { Some(a), None }\nextern \"std/bytes\" = { fn bad(s: Str) -> Option[Int] }";
+      "type Result[a, e] = { Success(a), Failure(e) }\nextern \"std/bytes\" = { fn bad(s: Str) -> Result[Int, Str] }";
+      "extern \"std/bytes\" = { fn bad(s: Str) -> (Str) -> Str }";
+    ]
+  in
+  List.for_all
+    (fun source ->
+      Infer.reset_fresh_counter ();
+      Trait_registry.clear ();
+      match check_string ~file_id:"std.bytes" source with
+      | Ok _ -> false
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags)
+    cases
+
+let%test "shim S2: checker accepts list boundary values" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  match
+    check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn collect(input: List[Str]) -> List[Str] }"
+  with
+  | Ok result -> (
+      match
+        Hashtbl.find_opt result.extern_declarations
+          (Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"collect")
+      with
+      | Some func -> (
+          match (func.param_boundary_types, func.return_boundary_type) with
+          | [ Shim_boundary.BList Shim_boundary.BStr ], Shim_boundary.BList Shim_boundary.BStr -> true
+          | _ -> false)
+      | None -> false)
+  | Error _ -> false
+
+let%test "shim callbacks: checker accepts function parameters and rejects function returns" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let accepted =
+    match
+      check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn map(input: Str, f: (Str) -> Str) -> Str }"
+    with
+    | Ok _ -> true
+    | Error _ -> false
+  in
+  let rejected =
+    Infer.reset_fresh_counter ();
+    Trait_registry.clear ();
+    match check_string ~file_id:"std.bytes" "extern \"std/bytes\" = { fn bad(s: Str) -> (Str) -> Str }" with
+    | Ok _ -> false
+    | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-shim-boundary") diags
+  in
+  accepted && rejected
+
+let%test "shim S2: checker normalizes primitive aliases in shim signatures" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      type Stringy = Str
+      extern "std/bytes" = { fn to_str_lossy(input: Stringy) -> Stringy }
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok result -> (
+      match
+        Hashtbl.find_opt result.extern_declarations
+          (Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"to_str_lossy")
+      with
+      | Some func ->
+          func.param_boundary_types = [ Shim_boundary.BStr ] && func.return_boundary_type = Shim_boundary.BStr
+      | None -> false)
+  | Error _ -> false
+
+let%test "shim S2: checker rejects duplicate blocks for the same shim" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" as b = { fn from_str(input: Str) -> Str }
+      extern "std/bytes" as other = { fn to_str_lossy(input: Str) -> Str }
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-block-duplicate") diags
+
+let%test "shim S2: shim direct call returns declared type and records artifacts" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      bytes.to_str_lossy("x")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok result ->
+      let has_call_resolution =
+        Hashtbl.fold
+          (fun _ resolution acc ->
+            acc
+            ||
+            match resolution with
+            | Resolution_artifacts.ShimQualifiedCall key ->
+                key = Extern_registry.shim_key ~shim_id:"std/bytes" ~func_name:"to_str_lossy"
+            | _ -> false)
+          result.call_resolution_map false
+      in
+      result.result_type = Types.TString && has_call_resolution && Hashtbl.length result.extern_calls = 1
+  | Error _ -> false
+
+let%test "shim S2: shim bool return typechecks" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn equal?(left: Str, right: Str) -> Bool }
+      bytes.equal?("abc", "b")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok result -> result.result_type = Types.TBool
+  | Error _ -> false
+
+let%test "shim S2: shim call rejects wrong arity" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn equal?(left: Str, right: Str) -> Bool }
+      bytes.equal?("abc")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-constructor") diags
+
+let%test "shim S2: shim call rejects wrong argument type" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      bytes.to_str_lossy(1)
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-mismatch") diags
+
+let%test "shim S2: unknown shim function is rejected" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      bytes.trim(" x ")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "shim S2: shim function value use is rejected" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      let f = bytes.to_str_lossy
+      f("x")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "shim S2: shim qualifier value use is rejected with extern diagnostic" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code = {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      bytes
+    |} in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-extern") diags
+
+let%test "shim S2: shim blocks are visible before their textual position" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      fn upper(s: Str) -> Str = bytes.to_str_lossy(s)
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      upper("x")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 1
+  | Error _ -> false
+
+let%test "shim S2: local value binding shadows shim qualifier in expression position" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn to_str_lossy(input: Str) -> Str }
+      fn shadow() -> Str = {
+        let bytes = "local"
+        bytes
+      }
+      shadow()
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok result -> result.result_type = Types.TString && Hashtbl.length result.extern_calls = 0
+  | Error _ -> false
+
+let%test "shim S2: pure wrapper cannot call effectful shim" =
+  Infer.reset_fresh_counter ();
+  Trait_registry.clear ();
+  let code =
+    {|
+      extern "std/bytes" = { fn write!(input: Str) => Unit }
+      fn say(s: Str) -> Unit = bytes.write!(s)
+      say("x")
+    |}
+  in
+  match check_string ~file_id:"std.bytes" code with
+  | Ok _ -> false
+  | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-purity") diags

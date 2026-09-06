@@ -1,3 +1,10 @@
 # E72: All-nullary enum printed via puts uses String method
 enum Traffic = { Red, Yellow, Green }
+impl Show[Traffic] = {
+  fn show(light: Traffic) -> Str = match light {
+    case Traffic.Red: "Red"
+    case Traffic.Yellow: "Yellow"
+    case Traffic.Green: "Green"
+  }
+}
 puts(Traffic.Red)  # output: Red

@@ -35,6 +35,7 @@ After installing the plugin, run `:TSInstall marmoset` to download and compile t
 ## Features
 
 - **Syntax highlighting** via tree-sitter (keywords, types, functions, literals, operators, patterns, etc.)
+- **LSP support** via `$MARMOSET_ROOT/marmoset lsp`
 - **Code folding** on blocks, enums, traits, impls, match expressions, functions
 - **Indentation** via tree-sitter indent queries
 - **Textobjects** via [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects):
@@ -46,3 +47,9 @@ After installing the plugin, run `:TSInstall marmoset` to download and compile t
 ## Filetype
 
 `.mr` files are automatically detected as `marmoset`. Comment string is set to `# %s` and indentation defaults to 2 spaces.
+
+## Requirements
+
+Set `MARMOSET_ROOT` to the Marmoset checkout root. The plugin launches only
+`$MARMOSET_ROOT/marmoset lsp`; it does not search `PATH` or workspace
+directories for another language server.

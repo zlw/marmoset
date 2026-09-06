@@ -1,5 +1,13 @@
 # E30: Enum as function return type
 enum Direction = { North, South, East, West }
+impl Show[Direction] = {
+  fn show(direction: Direction) -> Str = match direction {
+    case Direction.North: "North"
+    case Direction.South: "South"
+    case Direction.East: "East"
+    case Direction.West: "West"
+  }
+}
 fn opposite(d: Direction) -> Direction = {
   match d {
     case Direction.North: Direction.South

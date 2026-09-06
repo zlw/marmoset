@@ -1,0 +1,14 @@
+export Path, join, dirname, basename, extname, clean, absolute?, relative?
+
+type Path = Path(Str)
+
+extern "std/path" as path_shim = {
+  fn join(left: Path, right: Path) -> Path
+  fn dirname(path: Path) -> Path
+  fn basename(path: Path) -> Str
+  fn extname(path: Path) -> Str
+  fn clean(path: Path) -> Path
+  fn absolute?(path: Path) -> Bool
+}
+
+fn relative?(path: Path) -> Bool = !path_shim.absolute?(path)

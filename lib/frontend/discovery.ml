@@ -25,10 +25,25 @@ let option_map_default opt ~default ~f =
   | Some value -> f value
 
 let normalize_path (path : string) : string =
-  if Filename.is_relative path then
-    Filename.concat (Sys.getcwd ()) path
-  else
-    path
+  let absolute =
+    if Filename.is_relative path then
+      Filename.concat (Sys.getcwd ()) path
+    else
+      path
+  in
+  let parts = String.split_on_char Filename.dir_sep.[0] absolute in
+  let rec normalize_parts acc = function
+    | [] -> List.rev acc
+    | ("" | ".") :: rest -> normalize_parts acc rest
+    | ".." :: rest -> (
+        match acc with
+        | [] -> normalize_parts acc rest
+        | _ :: parent -> normalize_parts parent rest)
+    | part :: rest -> normalize_parts (part :: acc) rest
+  in
+  match normalize_parts [] parts with
+  | [] -> Filename.dir_sep
+  | normalized_parts -> Filename.dir_sep ^ String.concat Filename.dir_sep normalized_parts
 
 let normalize_source_overrides (source_overrides : (string, string) Hashtbl.t) : (string, string) Hashtbl.t =
   let normalized = Hashtbl.create (Hashtbl.length source_overrides) in
@@ -58,6 +73,9 @@ let relative_to_root ~(root_dir : string) (path : string) : string =
   else
     failwith (Printf.sprintf "Path %s is not under root %s" path root_dir)
 
+let path_is_under_root ~(root_dir : string) (path : string) : bool =
+  String.equal root_dir path || starts_with ~prefix:(root_dir ^ Filename.dir_sep) path
+
 let module_id_of_file ~(root_dir : string) (file_path : string) : string =
   let relative = relative_to_root ~root_dir file_path in
   let without_ext =
@@ -77,7 +95,8 @@ let option_module_id = "std.option"
 let result_module_id = "std.result"
 let prelude_relative_path = Filename.concat "std" "prelude.mr"
 let toolchain_root_env_var = "MARMOSET_ROOT"
-let core_stdlib_modules = [ prelude_module_id; option_module_id; result_module_id ]
+let prelude_support_module_id = "std.basics"
+let core_stdlib_modules = [ prelude_module_id; prelude_support_module_id; option_module_id; result_module_id ]
 
 let is_std_import_path = function
   | "std" :: _ -> true
@@ -169,6 +188,11 @@ let imports_of_program (program : AST.program) : Module_context.import_info list
       | _ -> None)
     program
 
+let%test "extern declarations do not create module imports" =
+  match Syntax.Parser.parse ~file_id:"<test>" "extern \"fmt\" = { fn Println(s: Str) => Unit }\n" with
+  | Ok program -> imports_of_program program = []
+  | Error _ -> false
+
 let import_error (imp : Module_context.import_info) ~(code : string) ~(message : string) : Diagnostic.t =
   match imp.file_id with
   | Some file_id ->
@@ -198,6 +222,8 @@ let required_stdlib_module_path (state : discovery_state) ~(module_id : string) 
 
 let implicit_stdlib_dependencies (module_id : string) : string list =
   if String.equal module_id prelude_module_id then
+    []
+  else if String.equal module_id prelude_support_module_id then
     []
   else if String.equal module_id option_module_id || String.equal module_id result_module_id then
     [ prelude_module_id ]
@@ -327,12 +353,16 @@ let discover_project_with_overrides
     ?source_root ?stdlib_root ~(entry_file : string) ~(source_overrides : (string, string) Hashtbl.t) () :
     (Module_context.module_graph, Diagnostic.t) result =
   let entry_file = normalize_path entry_file in
-  let project_root =
-    match source_root with
-    | Some root -> normalize_path root
-    | None -> Filename.dirname entry_file
-  in
   let* stdlib_root = resolve_toolchain_root ?stdlib_root () in
+  let stdlib_source_root = Filename.concat stdlib_root "std" in
+  let project_root =
+    if path_is_under_root ~root_dir:stdlib_source_root entry_file then
+      stdlib_root
+    else
+      match source_root with
+      | Some root -> normalize_path root
+      | None -> Filename.dirname entry_file
+  in
   let entry_module = module_id_of_file ~root_dir:project_root entry_file in
   let state =
     {
@@ -346,8 +376,8 @@ let discover_project_with_overrides
   in
   let* () = discover_module state ~module_id:entry_module ~file_path:entry_file in
   let* () = discover_core_stdlib_modules state in
-  Module_context.build_graph ~root_dir:project_root ~modules:state.modules ~dependencies:state.dependencies
-    ~entry_module
+  Module_context.build_graph ~root_dir:project_root ~toolchain_root:stdlib_root ~modules:state.modules
+    ~dependencies:state.dependencies ~entry_module ()
 
 let discover_project ?source_root ?stdlib_root ~(entry_file : string) () :
     (Module_context.module_graph, Diagnostic.t) result =
@@ -409,6 +439,9 @@ let collect_expr_ids (program : AST.program) : int list =
       | AST.EnumConstructor (_, _, args) -> List.concat_map expr_ids args
       | AST.Match (scrutinee, arms) ->
           expr_ids scrutinee @ List.concat_map (fun (arm : AST.match_arm) -> expr_ids arm.body) arms
+      | AST.Try { tried; fallback; _ } ->
+          expr_ids tried @ (fallback |> Option.map expr_ids |> Option.value ~default:[])
+      | AST.Wrap { wrapped; _ } -> expr_ids wrapped
       | AST.RecordLit (fields, spread) ->
           List.concat_map
             (fun (field : AST.record_field) -> option_map_default field.field_value ~default:[] ~f:expr_ids)
@@ -424,8 +457,8 @@ let collect_expr_ids (program : AST.program) : int list =
     | AST.Let { value; _ } -> expr_ids value
     | AST.Return expr | AST.ExpressionStmt expr -> expr_ids expr
     | AST.Block stmts -> List.concat_map stmt_ids stmts
-    | AST.EnumDef _ | AST.TypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _ | AST.InherentImplDef _
-    | AST.DeriveDef _ | AST.TypeAlias _ ->
+    | AST.EnumDef _ | AST.TypeDef _ | AST.ExternTypeDef _ | AST.ShapeDef _ | AST.TraitDef _ | AST.ImplDef _
+    | AST.InherentImplDef _ | AST.DeriveDef _ | AST.TypeAlias _ | AST.ExternBlock _ ->
         []
   in
   List.concat_map stmt_ids program
@@ -481,8 +514,11 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
@@ -490,8 +526,37 @@ let%test "discover_project resolves std modules from an explicit toolchain stdli
           | Error _ -> false
           | Ok graph ->
               Hashtbl.mem graph.modules "std.prelude"
+              && Hashtbl.mem graph.modules "std.basics"
               && Hashtbl.mem graph.modules "std.option"
               && Hashtbl.mem graph.modules "std.result"))
+
+let%test "discover_project keeps projects under toolchain root separate from stdlib modules" =
+  let stdlib_root = make_temp_dir "marmoset_stdlib_project_" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+    (fun () ->
+      mkdir_p (Filename.concat stdlib_root "std");
+      write_file
+        (Filename.concat stdlib_root "std/prelude.mr")
+        "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
+      write_file (Filename.concat stdlib_root "std/basics.mr") "export puts\nfn puts(value: Int) => Unit = {}\n";
+      write_file
+        (Filename.concat stdlib_root "std/option.mr")
+        "export Option\ntype Option[a] = { Some(a), None }\n";
+      write_file
+        (Filename.concat stdlib_root "std/result.mr")
+        "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+      let project_root = Filename.concat stdlib_root "examples" in
+      mkdir_p project_root;
+      write_file (Filename.concat project_root "main.mr") "import math\nlet value = math.value\n";
+      write_file (Filename.concat project_root "math.mr") "export value\nlet value = 1\n";
+      match discover_project ~stdlib_root ~entry_file:(Filename.concat project_root "main.mr") () with
+      | Error _ -> false
+      | Ok graph ->
+          String.equal graph.root_dir project_root
+          && String.equal graph.entry_module "main"
+          && Hashtbl.mem graph.modules "math"
+          && Hashtbl.mem graph.modules "std.prelude")
 
 let%test "resolve_toolchain_root honors MARMOSET_ROOT before installed probing" =
   let stdlib_root = make_temp_dir "marmoset_stdlib_env_" in
@@ -505,6 +570,9 @@ let%test "resolve_toolchain_root honors MARMOSET_ROOT before installed probing" 
       write_file
         (Filename.concat stdlib_root "std/prelude.mr")
         "export Ordering\ntype Ordering = { Less, Equal, Greater }\n";
+      write_file
+        (Filename.concat stdlib_root "std/basics.mr")
+        "import std.prelude.Ordering\nexport puts\nfn puts(value: Int) => Unit = {}\n";
       write_file
         (Filename.concat stdlib_root "std/option.mr")
         "export Option\ntype Option[a] = { Some(a), None }\n";
@@ -529,6 +597,9 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          write_file
             (Filename.concat stdlib_root "std/option.mr")
             "export Option\ntype Option[a] = { Some(a), None }\n";
           write_file
@@ -552,9 +623,11 @@ let%test "discover_project orders non-core stdlib modules after core stdlib modu
               | None -> false
               | Some deps ->
                   List.mem "std.prelude" deps
+                  && List.mem "std.basics" deps
                   && List.mem "std.option" deps
                   && List.mem "std.result" deps
                   && Option.get (index_of "std.prelude") < Option.get (index_of "std.foo")
+                  && Option.get (index_of "std.basics") < Option.get (index_of "std.foo")
                   && Option.get (index_of "std.option") < Option.get (index_of "std.foo")
                   && Option.get (index_of "std.result") < Option.get (index_of "std.foo"))))
 

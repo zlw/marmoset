@@ -1,0 +1,4 @@
+# R013: try or fallback must match the unwrapped success type
+fn maybe() -> Option[Int] = Option.None
+
+let value = try maybe() or "five"  # error: Cannot unify

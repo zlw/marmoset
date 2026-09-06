@@ -39,6 +39,11 @@ let rec next_token (l : lexer) : lexer * Token.token =
         (read_char (read_char l), Token.init ~pos Arrow "->")
       else
         (read_char l, Token.init ~pos Minus "-")
+  | '~' ->
+      if peek_char l = '>' then
+        (read_char (read_char l), Token.init ~pos TildeArrow "~>")
+      else
+        (read_char l, Token.init ~pos Illegal "~")
   | '*' -> (read_char l, Token.init ~pos Asterisk "*")
   | '/' -> (read_char l, Token.init ~pos Slash "/")
   | '<' ->
@@ -126,6 +131,7 @@ and read_string (l : lexer) : lexer * string =
   let rec scan_string (ll : lexer) : lexer =
     match ll.ch with
     | '\000' | '"' -> ll
+    | '\\' -> scan_string (read_char (read_char ll))
     | '#' when peek_char ll = '{' ->
         let after_open = read_char (read_char ll) in
         scan_string (scan_interpolation after_open 1)
@@ -133,6 +139,7 @@ and read_string (l : lexer) : lexer * string =
   and scan_interpolation (ll : lexer) (depth : int) : lexer =
     match ll.ch with
     | '\000' -> ll
+    | '\\' -> scan_interpolation (read_char (read_char ll)) depth
     | '"' ->
         let nested_end = scan_string (read_char ll) in
         let after_nested =

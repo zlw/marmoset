@@ -48,7 +48,7 @@ let rec function_is_effectful n mono =
     false
   else
     match mono with
-    | Types.TFun (_, rest, is_effectful) -> is_effectful || function_is_effectful (n - 1) rest
+    | Types.TFun (_, rest, effect) -> Types.effect_is_effectful effect || function_is_effectful (n - 1) rest
     | _ -> false
 
 (* Extract the return type of a function with n parameters *)
@@ -239,8 +239,9 @@ let rec walk_stmt
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.Return e -> walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
-    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _
+    | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _
+    | Ast.AST.ExternBlock _ ->
         ()
 
 and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites (expr : Ast.AST.expression) =
@@ -296,6 +297,11 @@ and walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~s
         Option.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) spread
     | Ast.AST.EnumConstructor (_, _, args) ->
         List.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) args
+    | Ast.AST.Try { tried; fallback; _ } ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites tried;
+        Option.iter (walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites) fallback
+    | Ast.AST.Wrap { wrapped; _ } ->
+        walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites wrapped
     | Ast.AST.TypeCheck (e, _) ->
         walk_expr ~source ~program ~type_map ~environment ~range_start ~range_end ~sites e
     | Ast.AST.BlockExpr stmts ->
@@ -434,7 +440,7 @@ let%test "type_to_source effectful function" =
   type_to_source (Types.tfun_eff Types.TInt Types.TBool) = "(Int) => Bool"
 
 let%test "type_to_source mixed purity multi-arg" =
-  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, true), false))
+  type_to_source (Types.TFun (Types.TInt, Types.TFun (Types.TString, Types.TBool, Types.Effectful), Types.Pure))
   = "(Int, Str) => Bool"
 
 let%test "type_to_source union of pure/effectful collapses to effectful" =

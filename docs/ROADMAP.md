@@ -2,7 +2,7 @@
 
 ## Maintenance
 
-- Last verified: 2026-04-04
+- Last verified: 2026-05-09
 - Implementation status: Canonical (actively maintained)
 - Update trigger: Any change to milestone status, plan ordering, or deferred-ideas ownership
 
@@ -25,12 +25,16 @@
 5. [Pre-modules parity and hardening](docs/plans/done/language/05_pre-modules-parity-and-hardening.md)
 6. [Module system](docs/plans/done/language/06_module-system.md)
 7. [Prelude](docs/plans/done/language/07_prelude.md)
+8. [FFI](docs/plans/done/language/08_ffi.md)
+9. [Shim-first Go interop](docs/plans/done/language/09_shim-first-go-interop.md)
 
 ### Tooling
 
 1. [Diagnostics rework](docs/plans/done/tooling/01_diagnostics-rework.md)
 2. [Fixture harness migration](docs/plans/done/tooling/02_fixture-harness-migration.md)
 3. [Module-aware LSP navigation and completion](docs/plans/done/tooling/03_module-aware-lsp.md)
+4. [Broaden LSP symbol navigation and completion](docs/plans/done/tooling/04_lsp_symbol_navigation_and_completion.md)
+5. [LSP export visibility CodeLens](docs/plans/done/tooling/05_lsp_export_visibility_codelens.md)
 
 ### CI
 
@@ -40,22 +44,22 @@
 
 ### Main Language Track
 
-1. [FFI](docs/plans/todo/language/03_ffi.md)
-2. [Stdlib](docs/plans/todo/language/04_stdlib.md)
-3. [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
+1. [Stdlib](docs/plans/todo/language/05_stdlib.md)
+2. [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
 
 Current status:
 - Prelude infrastructure is complete: the compiler resolves a toolchain-owned stdlib root, auto-loads `std.prelude`, `std.option`, and `std.result` through the normal module pipeline, and uses the same discovery/orchestration path for headerless entries.
-- Broader library expansion still belongs to the later [Stdlib](docs/plans/todo/language/04_stdlib.md) milestone.
+- Shim-first Go interop is complete as the current implementation: direct arbitrary Go package externs are removed, and Go-backed library work uses checked-in shim packages plus generated typed ABI packages.
+- Broader library expansion belongs to the later [Stdlib](docs/plans/todo/language/05_stdlib.md) milestone and should use shim-backed modules where Go integration is needed.
 
 ### Queued Language Work
 
-1. [Function overloading](docs/plans/todo/language/06_function-overloading.md)
-2. [Universal constraints and interface value types](docs/plans/todo/language/07_forall-exists.md)
+1. [Function overloading](docs/plans/todo/language/07_function-overloading.md)
+2. [Universal constraints and interface value types](docs/plans/todo/language/08_forall-exists.md)
 
 ### Post-Stdlib Performance Work
 
-1. [Higher-order function optimization](docs/plans/todo/language/08_hof_optimization.md)
+1. [Higher-order function optimization](docs/plans/todo/language/09_hof_optimization.md)
 
 ### Parallel Tooling Track
 
@@ -77,15 +81,16 @@ These areas already have a concrete plan or completed milestone and should not a
   [Module system](docs/plans/done/language/06_module-system.md)
 - core language/library platform milestones:
   [Prelude](docs/plans/done/language/07_prelude.md),
-  [FFI](docs/plans/todo/language/03_ffi.md),
-  [Stdlib](docs/plans/todo/language/04_stdlib.md)
+  [FFI](docs/plans/done/language/08_ffi.md),
+  [Shim-first Go interop](docs/plans/done/language/09_shim-first-go-interop.md),
+  [Stdlib](docs/plans/todo/language/05_stdlib.md)
 - associated types, open rows, post-module coherence work, and later lowering expansion:
-  [Post-modules type-system expansion](docs/plans/todo/language/05_post-modules-type-system-expansion.md)
+  [Post-modules type-system expansion](docs/plans/todo/language/06_post-modules-type-system-expansion.md)
 - later planned language work on the stabilized explicit-qualified call model:
-  [Function overloading](docs/plans/todo/language/06_function-overloading.md),
-  [Universal constraints and interface value types](docs/plans/todo/language/07_forall-exists.md)
+  [Function overloading](docs/plans/todo/language/07_function-overloading.md),
+  [Universal constraints and interface value types](docs/plans/todo/language/08_forall-exists.md)
 - post-stdlib backend optimization work:
-  [Higher-order function optimization](docs/plans/todo/language/08_hof_optimization.md)
+  [Higher-order function optimization](docs/plans/todo/language/09_hof_optimization.md)
 - current planned tooling / CI work:
   [OCaml test harness rewrite](docs/plans/todo/tooling/01_ocaml-test-harness.md),
   [Single OCaml setup in CI](docs/plans/todo/ci/01_single-ocaml-setup-in-ci.md)
@@ -119,6 +124,13 @@ These areas already have a concrete plan or completed milestone and should not a
 - specialization deduping and explosion-analysis tooling
 - selective Go-generics backend experiments
 - mid-level IR work only if workload pressure justifies it
+
+### Interop Follow-Ups
+
+- project-local user shim packaging and generated API preview/editor workflow
+- callback support for shim-backed framework wrappers
+- records/lists/maps at shim boundaries beyond the stdlib slices that explicitly need them
+- language-general tuple support, only if it becomes useful outside Go interop
 
 ### Tooling And Process
 

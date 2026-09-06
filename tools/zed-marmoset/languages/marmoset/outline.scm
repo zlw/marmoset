@@ -29,3 +29,15 @@
 (type_definition
   "type" @context
   name: (identifier) @name) @item
+
+(extern_type_definition
+  "extern" @context
+  name: (identifier) @name) @item
+
+(extern_block
+  "extern" @context
+  alias: (identifier) @name) @item
+
+(extern_fn_signature
+  "fn" @context
+  name: (identifier) @name) @item

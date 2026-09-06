@@ -1,6 +1,28 @@
 package main
 
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+	"strconv"
+)
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
+
+func puts_int64(value int64) struct{} {
+    return extern__std_basics__puts_str(show_show_int64(value))
+}
+
+func show_show_int64(x int64) string {
+	return strconv.FormatInt(x, 10)
+}
 func main() {
     n := int64(1)
     _ = n
@@ -18,5 +40,5 @@ func main() {
 
     }
     _ = f
-    _ = puts(f(int64(5)))
+    _ = puts_int64(f(int64(5)))
 }

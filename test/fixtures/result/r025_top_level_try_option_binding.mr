@@ -1,0 +1,5 @@
+# R025: top-level try can bind an unwrapped Option.Some value
+fn maybe() -> Option[Int] = Option.Some(41)
+
+let value = try maybe()
+puts(value)  # output: 41

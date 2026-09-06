@@ -11,6 +11,7 @@ module Builtins = Typecheck.Builtins
 module Checker = Typecheck.Checker
 module Codegen = Codegen.Emitter
 module Enum_registry = Typecheck.Enum_registry
+module Extern_registry = Typecheck.Extern_registry
 module Inherent_registry = Typecheck.Inherent_registry
 module Infer = Typecheck.Infer
 module Module_sig = Typecheck.Module_sig
@@ -38,7 +39,10 @@ type checked_module = {
 
 type project_resolution_artifacts = {
   type_map : Infer.type_map;
-  call_resolution_map : (int, Infer.method_resolution) Hashtbl.t;
+  call_resolution_map : (int, Typecheck.Resolution_artifacts.call_resolution) Hashtbl.t;
+  extern_declarations : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t;
+  extern_calls : (int, Typecheck.Resolution_artifacts.extern_call) Hashtbl.t;
+  extern_func_refs : (int, string) Hashtbl.t;
   method_type_args_map : (int, Types.mono_type list) Hashtbl.t;
   method_def_map : (int, Typecheck.Resolution_artifacts.typed_method_def) Hashtbl.t;
   trait_object_coercion_map : (int, Typecheck.Resolution_artifacts.trait_object_coercion) Hashtbl.t;
@@ -46,6 +50,7 @@ type project_resolution_artifacts = {
 }
 
 type compiled_project = {
+  toolchain_root : string option;
   modules : checked_module list;
   program : AST.program;
   environment : Infer.type_env;
@@ -96,6 +101,9 @@ let create_project_resolution_artifacts () : project_resolution_artifacts =
   {
     type_map = Hashtbl.create 512;
     call_resolution_map = Hashtbl.create 256;
+    extern_declarations = Hashtbl.create 64;
+    extern_calls = Hashtbl.create 128;
+    extern_func_refs = Hashtbl.create 128;
     method_type_args_map = Hashtbl.create 128;
     method_def_map = Hashtbl.create 128;
     trait_object_coercion_map = Hashtbl.create 128;
@@ -106,10 +114,20 @@ let merge_project_resolution_artifacts (dst : project_resolution_artifacts) (res
     unit =
   merge_hashtbl dst.type_map result.type_map;
   merge_hashtbl dst.call_resolution_map result.call_resolution_map;
+  merge_hashtbl dst.extern_declarations result.extern_declarations;
+  merge_hashtbl dst.extern_calls result.extern_calls;
+  merge_hashtbl dst.extern_func_refs result.extern_func_refs;
   merge_hashtbl dst.method_type_args_map result.method_type_args_map;
   merge_hashtbl dst.method_def_map result.method_def_map;
   merge_hashtbl dst.trait_object_coercion_map result.trait_object_coercion_map;
   merge_hashtbl dst.placeholder_rewrite_map result.placeholder_rewrite_map
+
+let extern_signatures_equal
+    (a : Typecheck.Resolution_artifacts.extern_func) (b : Typecheck.Resolution_artifacts.extern_func) : bool =
+  List.length a.param_boundary_types = List.length b.param_boundary_types
+  && List.for_all2 Typecheck.Shim_boundary.equal_boundary_type a.param_boundary_types b.param_boundary_types
+  && Typecheck.Shim_boundary.equal_boundary_type a.return_boundary_type b.return_boundary_type
+  && Bool.equal a.is_effectful b.is_effectful
 
 let diagnostics_have_errors (diagnostics : Diagnostic.t list) : bool =
   List.exists (fun (diag : Diagnostic.t) -> diag.severity = Diagnostic.Error) diagnostics
@@ -136,6 +154,15 @@ let iter_result f xs =
   in
   go xs
 
+let map_result f xs =
+  let rec go acc = function
+    | [] -> Ok (List.rev acc)
+    | x :: rest ->
+        let* y = f x in
+        go (y :: acc) rest
+  in
+  go [] xs
+
 let error_at_stmt ~(code : string) ~(message : string) (stmt : AST.statement) : Diagnostic.t =
   match stmt.file_id with
   | Some file_id ->
@@ -148,10 +175,61 @@ let reset_module_state () =
   Trait_registry.clear ();
   Inherent_registry.clear ();
   Enum_registry.clear ();
-  Infer.clear_method_resolution_store ();
+  Extern_registry.clear ();
+  Infer.clear_call_resolution_store ();
   Infer.clear_type_var_user_names ();
   Infer.clear_top_level_placeholders ();
   Infer.clear_constraint_store ()
+
+let sanitize_signature_type_var_component (s : string) : string =
+  let is_ident_char = function
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' -> true
+    | _ -> false
+  in
+  String.map
+    (fun ch ->
+      if is_ident_char ch then
+        ch
+      else
+        '_')
+    s
+
+let namespaced_exported_value_type ~(module_id : string) ~(internal_name : string) (poly : Types.poly_type) :
+    Types.poly_type * (string * Typecheck.Constraints.t list) list =
+  let (Types.Forall (vars, mono)) = poly in
+  let prefix =
+    Printf.sprintf "__sig_%s__%s__"
+      (sanitize_signature_type_var_component module_id)
+      (sanitize_signature_type_var_component internal_name)
+  in
+  let row_vars = Infer.row_vars_in_type mono in
+  let mapping = List.map (fun var -> (var, prefix ^ sanitize_signature_type_var_component var)) vars in
+  let subst =
+    mapping
+    |> List.map (fun (var, namespaced_var) ->
+           if Types.TypeVarSet.mem var row_vars then
+             (var, Types.TRowVar namespaced_var)
+           else
+             (var, Types.TVar namespaced_var))
+    |> Types.substitution_of_list
+  in
+  let value_constraints =
+    mapping
+    |> List.filter_map (fun (var, namespaced_var) ->
+           match Infer.lookup_type_var_constraints var with
+           | [] -> None
+           | constraints -> Some (namespaced_var, constraints))
+  in
+  (Types.Forall (List.map snd mapping, Types.apply_substitution subst mono), value_constraints)
+
+let poly_type_of_extern_func (func : Typecheck.Resolution_artifacts.extern_func) : Types.poly_type =
+  let param_types = List.map Typecheck.Shim_boundary.to_mono_type func.param_boundary_types in
+  let return_type = Typecheck.Shim_boundary.to_mono_type func.return_boundary_type in
+  Types.Forall
+    ( [],
+      List.fold_right
+        (fun param_type acc -> Types.TFun (param_type, acc, Types.effect_of_bool func.is_effectful))
+        param_types return_type )
 
 let has_module_headers (program : AST.program) : bool =
   List.exists
@@ -164,9 +242,16 @@ let has_module_headers (program : AST.program) : bool =
 let seed_signature_exports (signature : Module_sig.module_signature) (env : Infer.type_env) : Infer.type_env =
   Hashtbl.fold
     (fun _name (binding : Module_sig.member_binding) env_acc ->
+      Option.iter
+        (fun func -> Extern_registry.register_exported_binding ~internal_name:binding.internal_name func)
+        binding.extern_func;
       let env_acc =
         match binding.value_type with
-        | Some poly -> Infer.TypeEnv.add binding.internal_name poly env_acc
+        | Some poly ->
+            List.iter
+              (fun (var, constraints) -> Infer.add_type_var_constraint_refs var constraints)
+              binding.value_constraints;
+            Infer.TypeEnv.add binding.internal_name poly env_acc
         | None -> env_acc
       in
       Option.iter Enum_registry.register binding.enum_def;
@@ -176,6 +261,16 @@ let seed_signature_exports (signature : Module_sig.module_signature) (env : Infe
       Option.iter Trait_registry.register_trait binding.trait_def;
       env_acc)
     signature.exports env
+
+let seed_signature_metadata (signature : Module_sig.module_signature) : unit =
+  Hashtbl.iter
+    (fun _name (binding : Module_sig.member_binding) ->
+      Option.iter Enum_registry.register binding.enum_def;
+      Option.iter Type_registry.register_named_type binding.named_type_def;
+      Option.iter (Annotation.register_type_alias_info ~name:binding.internal_name) binding.transparent_type;
+      Option.iter Type_registry.register_shape binding.shape_def;
+      Option.iter Trait_registry.register_trait binding.trait_def)
+    signature.exports
 
 let prebound_value_symbols_of_signature (signature : Module_sig.module_signature) :
     (string * Infer.prebound_symbol_info) list =
@@ -334,6 +429,13 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Type_registry.lookup_named_type type_name)
             in
             go { acc with named_types = named_type_def :: acc.named_types } rest
+        | AST.ExternTypeDef { extern_type_name } ->
+            let* named_type_def =
+              required_opt ~code:"module-signature-type"
+                ~message:(Printf.sprintf "Missing extern type registry entry for '%s'" extern_type_name)
+                (Type_registry.lookup_named_type extern_type_name)
+            in
+            go { acc with named_types = named_type_def :: acc.named_types } rest
         | AST.TypeAlias { alias_name; _ } ->
             let* alias_info =
               required_opt ~code:"module-signature-alias"
@@ -431,7 +533,8 @@ let extract_module_locals (program : AST.program) : (Module_sig.module_locals, D
                 (Ok []) derive_traits
             in
             go { acc with trait_impls = List.rev_append derived_impls acc.trait_impls } rest
-        | AST.ExportDecl _ | AST.ImportDecl _ | AST.Let _ | AST.Return _ | AST.ExpressionStmt _ | AST.Block _ ->
+        | AST.ExportDecl _ | AST.ImportDecl _ | AST.ExternBlock _ | AST.Let _ | AST.Return _
+        | AST.ExpressionStmt _ | AST.Block _ ->
             go acc rest)
   in
   go empty_locals_acc program
@@ -467,17 +570,28 @@ let extract_module_signature
       Import_resolver.StringMap.empty locals.traits
   in
   let add_export surface_name (presence : Import_resolver.member_presence) =
-    let value_type =
+    let extern_func = Option.bind presence.extern_func_key Extern_registry.lookup_by_key in
+    let value_type, value_constraints =
       if presence.has_value then
-        Infer.TypeEnv.find_opt presence.internal_name environment
+        match (Infer.TypeEnv.find_opt presence.internal_name environment, extern_func) with
+        | Some poly, _ ->
+            let poly, constraints =
+              namespaced_exported_value_type ~module_id:surface.module_id ~internal_name:presence.internal_name
+                poly
+            in
+            (Some poly, constraints)
+        | None, Some func -> (Some (poly_type_of_extern_func func), [])
+        | None, None -> (None, [])
       else
-        None
+        (None, [])
     in
     let binding =
       {
         Module_sig.internal_name = presence.internal_name;
         value_type;
+        value_constraints;
         value_definition = presence.value_definition;
+        extern_func;
         enum_def =
           (if presence.has_enum then
              Import_resolver.StringMap.find_opt presence.internal_name enum_map
@@ -576,12 +690,24 @@ let validate_build_wide_trait_impl_coherence
           |> Result.map_error (fun (diag : Diagnostic.t) ->
                  [ error_at_stmt ~code:"module-trait-impl-register" ~message:diag.message stmt ])
         in
+        let* impl_trait_args =
+          match impl_def.impl_trait_args with
+          | [] -> Ok [ for_type ]
+          | args ->
+              map_result
+                (fun arg ->
+                  Annotation.type_expr_to_mono_type_with type_bindings arg
+                  |> Result.map_error (fun (diag : Diagnostic.t) ->
+                         [ error_at_stmt ~code:"module-trait-impl-register" ~message:diag.message stmt ]))
+                args
+        in
         try
           Trait_registry.register_impl
             {
               Trait_registry.impl_trait_name = impl_def.impl_trait_name;
               impl_type_params = impl_def.impl_type_params;
               impl_for_type = for_type;
+              impl_trait_args;
               impl_methods = [];
             };
           Ok ()
@@ -598,6 +724,7 @@ let validate_build_wide_trait_impl_coherence
 let compile_module
     ~(surfaces : (string, Import_resolver.module_surface) Hashtbl.t)
     ~(typed_signatures : (string, Module_sig.module_signature) Hashtbl.t)
+    ~(visible_dependency_modules : string list)
     ~(rewrite : Import_resolver.rewrite_result)
     (module_info : Module_context.parsed_module) : (checked_module, Diagnostic.t list) result =
   reset_module_state ();
@@ -606,22 +733,48 @@ let compile_module
   in
   let state = Infer.create_inference_state () in
   let* env, prebound_symbols =
-    let rec seed_imports env_acc prebound_symbols_acc = function
-      | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
-      | module_id :: rest -> (
-          match Hashtbl.find_opt typed_signatures module_id with
-          | None -> seed_imports env_acc prebound_symbols_acc rest
-          | Some signature ->
-              let env_acc = seed_signature_exports signature env_acc in
-              let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
-              seed_imports env_acc
-                (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
-                rest)
-    in
-    seed_imports (Builtins.builtin_value_env ()) [] rewrite.resolved_imports.direct_modules
+    Infer.with_inference_state state (fun () ->
+        let direct_module_set =
+          List.fold_left
+            (fun acc module_id -> Import_resolver.StringSet.add module_id acc)
+            Import_resolver.StringSet.empty rewrite.resolved_imports.direct_modules
+        in
+        let hidden_dependency_modules =
+          visible_dependency_modules @ (Hashtbl.to_seq_keys typed_signatures |> List.of_seq)
+          |> List.filter (fun module_id ->
+                 (not (String.equal module_id module_info.module_id))
+                 && not (Import_resolver.StringSet.mem module_id direct_module_set))
+          |> List.sort_uniq String.compare
+        in
+        let rec seed_hidden_dependencies = function
+          | [] -> Ok ()
+          | module_id :: rest -> (
+              match Hashtbl.find_opt typed_signatures module_id with
+              | None -> seed_hidden_dependencies rest
+              | Some signature ->
+                  seed_signature_metadata signature;
+                  let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
+                  seed_hidden_dependencies rest)
+        in
+        let rec seed_imports env_acc prebound_symbols_acc = function
+          | [] -> Ok (env_acc, List.rev prebound_symbols_acc)
+          | module_id :: rest -> (
+              match Hashtbl.find_opt typed_signatures module_id with
+              | None -> seed_imports env_acc prebound_symbols_acc rest
+              | Some signature ->
+                  let env_acc = seed_signature_exports signature env_acc in
+                  let* () = seed_visible_impls signature |> Result.map_error (fun diag -> [ diag ]) in
+                  seed_imports env_acc
+                    (List.rev_append (prebound_value_symbols_of_signature signature) prebound_symbols_acc)
+                    rest)
+        in
+        let* () = seed_hidden_dependencies hidden_dependency_modules in
+        seed_imports (Builtins.primitive_value_env ()) [] rewrite.resolved_imports.direct_modules)
   in
   if not (is_prelude_module module_info.module_id) then
     Builtins.init_builtin_impls ();
+  Extern_registry.set_current_module_id module_info.module_id;
+  Type_registry.set_current_module_id module_info.module_id;
   let* result =
     Checker.check_program_with_annotations ~state ~prebound_symbols ~prepare_state:false ~expand_derives:false
       ~env expanded_program
@@ -640,7 +793,8 @@ let compile_module
           ]
   in
   let* signature =
-    extract_module_signature ~surface ~environment:result.environment ~locals
+    Infer.with_inference_state state (fun () ->
+        extract_module_signature ~surface ~environment:result.environment ~locals)
     |> Result.map_error (fun diag -> [ diag ])
   in
   Ok
@@ -655,7 +809,57 @@ let compile_module
       navigation = { surface; resolved_imports = rewrite.resolved_imports };
     }
 
-let merge_checked_modules (modules : checked_module list) : compiled_project =
+let validate_project_extern_signature_coherence (modules : checked_module list) : (unit, Diagnostic.t list) result
+    =
+  let seen : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
+  let owners_by_shim_id : (string, Typecheck.Resolution_artifacts.extern_func) Hashtbl.t = Hashtbl.create 64 in
+  let rec check_module = function
+    | [] -> Ok ()
+    | (module_ : checked_module) :: rest -> (
+        let conflict =
+          Hashtbl.fold
+            (fun shim_key (func : Typecheck.Resolution_artifacts.extern_func) acc ->
+              match acc with
+              | Some _ -> acc
+              | None -> (
+                  match Hashtbl.find_opt owners_by_shim_id func.shim_id with
+                  | Some existing when not (String.equal existing.owner_module_id func.owner_module_id) ->
+                      Some (`OwnerDuplicate (existing, func))
+                  | Some _ | None -> (
+                      Hashtbl.replace owners_by_shim_id func.shim_id func;
+                      match Hashtbl.find_opt seen shim_key with
+                      | Some existing when not (extern_signatures_equal existing func) ->
+                          Some (`SignatureConflict (existing, func))
+                      | Some _ ->
+                          Hashtbl.replace seen shim_key func;
+                          None
+                      | None ->
+                          Hashtbl.replace seen shim_key func;
+                          None)))
+            module_.result.extern_declarations None
+        in
+        match conflict with
+        | None -> check_module rest
+        | Some (`OwnerDuplicate (existing, func)) ->
+            Error
+              [
+                compiler_error ~code:"shim-owner-duplicate"
+                  ~message:
+                    (Printf.sprintf "Shim %S is declared by both module '%s' and module '%s'" func.shim_id
+                       existing.owner_module_id func.owner_module_id);
+              ]
+        | Some (`SignatureConflict (existing, func)) ->
+            Error
+              [
+                compiler_error ~code:"shim-function-duplicate"
+                  ~message:
+                    (Printf.sprintf "Conflicting shim signatures for %S.%s between modules '%s' and '%s'"
+                       func.shim_id func.marmoset_func_name existing.owner_module_id func.owner_module_id);
+              ])
+  in
+  check_module modules
+
+let merge_checked_modules ?toolchain_root (modules : checked_module list) : compiled_project =
   let program = List.concat_map (fun (m : checked_module) -> m.program) modules in
   let environment =
     List.fold_left
@@ -676,6 +880,7 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
         m.result.identifier_symbols)
     modules;
   {
+    toolchain_root;
     modules;
     program;
     environment;
@@ -686,33 +891,60 @@ let merge_checked_modules (modules : checked_module list) : compiled_project =
   }
 
 let compile_project (graph : Module_context.module_graph) : (compiled_project, Diagnostic.t list) result =
-  let* surfaces = Import_resolver.build_module_surfaces graph |> Result.map_error (fun diag -> [ diag ]) in
-  let* rewrites = rewrite_project_modules ~surfaces graph in
-  let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
-  let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
-  let rec go acc = function
-    | [] -> Ok (merge_checked_modules (List.rev acc))
-    | module_id :: rest -> (
-        match Hashtbl.find_opt graph.modules module_id with
-        | None ->
-            Error
-              [ compiler_error ~code:"module-missing" ~message:(Printf.sprintf "Missing module '%s'" module_id) ]
-        | Some module_info ->
-            let* rewrite =
-              match Hashtbl.find_opt rewrites module_id with
-              | Some rewrite -> Ok rewrite
-              | None ->
-                  Error
-                    [
-                      compiler_error ~code:"module-rewrite-missing"
-                        ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id);
-                    ]
-            in
-            let* checked_module = compile_module ~surfaces ~typed_signatures ~rewrite module_info in
-            Hashtbl.replace typed_signatures module_id checked_module.signature;
-            go (checked_module :: acc) rest)
-  in
-  go [] graph.topo_order
+  Typecheck.Shim_catalog.set_toolchain_root graph.toolchain_root;
+  Fun.protect
+    ~finally:(fun () -> Typecheck.Shim_catalog.set_toolchain_root None)
+    (fun () ->
+      let* surfaces = Import_resolver.build_module_surfaces graph |> Result.map_error (fun diag -> [ diag ]) in
+      let* rewrites = rewrite_project_modules ~surfaces graph in
+      let* () = validate_build_wide_trait_impl_coherence ~rewrites graph in
+      let typed_signatures = Hashtbl.create (List.length graph.topo_order) in
+      let dependency_closure_for_module module_id =
+        let seen = Hashtbl.create 16 in
+        let rec visit acc dep =
+          if Hashtbl.mem seen dep then
+            acc
+          else (
+            Hashtbl.replace seen dep ();
+            let deps = Option.value (Hashtbl.find_opt graph.dependencies dep) ~default:[] in
+            List.fold_left visit (dep :: acc) deps)
+        in
+        Option.value (Hashtbl.find_opt graph.dependencies module_id) ~default:[]
+        |> List.fold_left visit []
+        |> List.rev
+      in
+      let rec go acc = function
+        | [] ->
+            let modules = List.rev acc in
+            let* () = validate_project_extern_signature_coherence modules in
+            Ok (merge_checked_modules ?toolchain_root:graph.toolchain_root modules)
+        | module_id :: rest -> (
+            match Hashtbl.find_opt graph.modules module_id with
+            | None ->
+                Error
+                  [
+                    compiler_error ~code:"module-missing"
+                      ~message:(Printf.sprintf "Missing module '%s'" module_id);
+                  ]
+            | Some module_info ->
+                let* rewrite =
+                  match Hashtbl.find_opt rewrites module_id with
+                  | Some rewrite -> Ok rewrite
+                  | None ->
+                      Error
+                        [
+                          compiler_error ~code:"module-rewrite-missing"
+                            ~message:(Printf.sprintf "Missing rewrite for '%s'" module_id);
+                        ]
+                in
+                let visible_dependency_modules = dependency_closure_for_module module_id in
+                let* checked_module =
+                  compile_module ~surfaces ~typed_signatures ~visible_dependency_modules ~rewrite module_info
+                in
+                Hashtbl.replace typed_signatures module_id checked_module.signature;
+                go (checked_module :: acc) rest)
+      in
+      go [] graph.topo_order)
 
 let seed_module_locals (locals : Module_sig.module_locals) : (unit, Diagnostic.t) result =
   List.iter Enum_registry.register locals.enums;
@@ -763,13 +995,24 @@ let emit_compiled_project (project : compiled_project) : (Codegen.build_output, 
   try
     let main_go =
       Codegen.emit_program_with_typed_env ~call_resolution_map:project.artifacts.call_resolution_map
+        ~extern_declarations:project.artifacts.extern_declarations ~extern_calls:project.artifacts.extern_calls
+        ~extern_func_refs:project.artifacts.extern_func_refs
         ~method_type_args_map:project.artifacts.method_type_args_map
         ~method_def_map:project.artifacts.method_def_map
         ~trait_object_coercion_map:project.artifacts.trait_object_coercion_map
         ~placeholder_rewrite_map:project.artifacts.placeholder_rewrite_map project.artifacts.type_map
         project.environment project.program
     in
-    Ok { Codegen.main_go; runtime_go = Codegen.get_runtime (); diagnostics = project.diagnostics }
+    Ok
+      {
+        Codegen.go_mod = Codegen.default_go_mod;
+        main_go;
+        aux_go_files =
+          Codegen.shim_aux_go_files ?toolchain_root:project.toolchain_root
+            ~extern_declarations:project.artifacts.extern_declarations
+            ~extern_calls:project.artifacts.extern_calls ~extern_func_refs:project.artifacts.extern_func_refs ();
+        diagnostics = project.diagnostics;
+      }
   with
   | Failure message -> Error [ Codegen.diagnostic_of_codegen_failure_message message ]
   | exn ->
@@ -947,6 +1190,9 @@ let find_type_head_site_in_surface_program (program : Surface.surface_program) ~
       match stmt.std_decl with
       | Surface.STypeDef { type_name; type_name_ref; _ } when String.equal type_name surface_name ->
           definition_site_of_name_ref type_name_ref
+      | Surface.SExternTypeDef { extern_type_name; extern_type_name_ref }
+        when String.equal extern_type_name surface_name ->
+          definition_site_of_name_ref extern_type_name_ref
       | Surface.SShapeDef { shape_name; shape_name_ref; _ } when String.equal shape_name surface_name ->
           definition_site_of_name_ref shape_name_ref
       | Surface.STraitDef { name; name_ref; _ } when String.equal name surface_name ->
@@ -1104,8 +1350,8 @@ let find_callable_definition_site
             |> List.find_map (fun (module_ : Module_context.parsed_module) ->
                    find_method_site_in_surface_program module_.surface_program ~callable_id))
 
-let find_active_file_method_resolution (analysis : entry_analysis) ~(expr_id : int) :
-    Infer.method_resolution option =
+let find_active_file_call_resolution (analysis : entry_analysis) ~(expr_id : int) :
+    Typecheck.Resolution_artifacts.call_resolution option =
   Option.bind analysis.project (fun project -> Hashtbl.find_opt project.artifacts.call_resolution_map expr_id)
 
 let resolve_visible_type_name_to_mono (analysis : entry_analysis) ~(file_path : string) ~(surface_name : string) :
@@ -1312,6 +1558,24 @@ let compile_entry_to_build ?source_root ?stdlib_root ~(entry_file : string) () :
   in
   compile_project_to_build graph
 
+let string_contains s substring = Diagnostics.String_utils.contains_substring ~needle:substring s
+
+let count_occurrences haystack needle =
+  let needle_len = String.length needle in
+  let rec loop pos acc =
+    match String.index_from_opt haystack pos needle.[0] with
+    | None -> acc
+    | Some idx ->
+        if idx + needle_len <= String.length haystack && String.sub haystack idx needle_len = needle then
+          loop (idx + 1) (acc + 1)
+        else
+          loop (idx + 1) acc
+  in
+  if needle_len = 0 then
+    0
+  else
+    loop 0 0
+
 let%test "compile_project rewrites namespace imports to internal names" =
   Discovery.with_temp_project
     [
@@ -1340,6 +1604,34 @@ let%test "compile_entry_to_build keeps legacy single-file path working" =
       | Error _ -> false
       | Ok build_output -> Diagnostics.String_utils.contains_substring ~needle:"func add_" build_output.main_go)
 
+let%test "check_entry treats direct stdlib entries as std modules" =
+  let stdlib_root = Discovery.make_temp_dir "marmoset_direct_std_entry_" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+    (fun () ->
+      Discovery.mkdir_p (Filename.concat stdlib_root "std");
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/prelude.mr")
+        "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/basics.mr")
+        "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/option.mr")
+        "export Option\ntype Option[a] = { Some(a), None }\n";
+      Discovery.write_file
+        (Filename.concat stdlib_root "std/result.mr")
+        "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+      let entry_file = Filename.concat stdlib_root "std/basics.mr" in
+      let source_root = Filename.dirname entry_file in
+      let stdlib_root = Filename.concat stdlib_root "." in
+      let analysis = analyze_entry ~source_root ~stdlib_root ~entry_file () in
+      analysis.active_file.module_id = Some "std.basics"
+      &&
+      match check_entry ~source_root ~stdlib_root ~entry_file () with
+      | Ok _ -> true
+      | Error _ -> false)
+
 let%test "check_entry rejects colliding direct imports" =
   Discovery.with_temp_project
     [
@@ -1356,6 +1648,229 @@ let%test "check_entry rejects colliding direct imports" =
               diag.code = "module-import-name-collision"
               && Diagnostics.String_utils.contains_substring ~needle:"existing binding 'add'" diag.message)
             diags)
+
+let%test "shim S2: extern qualifier collides with namespace import" =
+  Discovery.with_temp_project
+    [
+      ( "std/bytes.mr",
+        "import lib.conflict\nextern \"std/bytes\" as conflict = { fn from_str(input: Str) -> Str }\n" );
+      ("lib/conflict.mr", "export id\nfn id(s: Str) -> Str = s\n");
+    ]
+    (fun root ->
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
+
+let%test "shim S2: extern qualifier collides with top-level declaration" =
+  Discovery.with_temp_project
+    [ ("std/bytes.mr", "let bytes = 1\nextern \"std/bytes\" = { fn from_str(input: Str) -> Str }\n") ]
+    (fun root ->
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
+
+let%test "shim S2: extern qualifier collides with implicit core binding" =
+  Discovery.with_temp_project
+    [ ("std/bytes.mr", "extern \"std/bytes\" as Option = { fn from_str(input: Str) -> Str }\n") ]
+    (fun root ->
+      match check_entry ~source_root:root ~entry_file:(Filename.concat root "std/bytes.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists (fun (diag : Diagnostic.t) -> diag.code = "module-extern-qualifier-collision") diags)
+
+let%test "shim S2: shim qualifiers remain module-local" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import std.bytes\nbyte_shim.to_str_lossy(byte_shim.from_str(\"x\"))\n") ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags ->
+          List.exists
+            (fun (diag : Diagnostic.t) -> diag.code = "type-unbound-var" || diag.code = "type-extern")
+            diags)
+
+let%test "shim S2: compile_project merges shim artifacts" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import std.bytes\nlet payload = bytes.from_str(\"x\")\nbytes.length(payload)\n") ]
+    (fun root ->
+      match Discovery.discover_project ~source_root:root ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok graph -> (
+          match compile_project graph with
+          | Error _ -> false
+          | Ok project ->
+              Hashtbl.length project.artifacts.extern_declarations >= 2
+              && Hashtbl.length project.artifacts.extern_calls >= 2))
+
+let%test "shim S2: std module exports ordinary API backed by private shim" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          && string_contains build_output.main_go {|mshim_std_bytes "marmoset_out/shims/std/bytes"|}
+          && string_contains build_output.main_go "mshim_std_bytes.FromStr(input)"
+          && not (string_contains build_output.main_go "shim adapter not implemented"))
+
+let%test "shim exports lower without Marmoset identity wrappers" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import std.bytes\nlet payload = bytes.from_str(\"hi\")\nputs(bytes.to_str_lossy(payload))\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "main__payload := extern__std_bytes__from_str(\"hi\")"
+          && string_contains build_output.main_go "puts_string(extern__std_bytes__to_str_lossy(main__payload))"
+          && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
+          && not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
+
+let%test "exported shim functions are ordinary first-class values" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.bytes\nfn apply(make, value) = make(value)\nlet make_bytes = bytes.from_str\nlet render = bytes.to_str_lossy\nlet payload = apply(make_bytes, \"hi\")\nputs(render(payload))\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "main__make_u005fbytes := extern__std_bytes__from_str"
+          && string_contains build_output.main_go "main__render := extern__std_bytes__to_str_lossy"
+          && string_contains build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          && (not (string_contains build_output.main_go "func std__bytes__from_u005fstr"))
+          && not (string_contains build_output.main_go "func std__bytes__to_u005fstr_u005flossy"))
+
+let%test "exported shim function value preserves effect checking" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.io\nfn pure_write(value: Str) -> Unit = {\n  let write = io.write\n  let _ = write(value)\n}\n"
+      );
+    ]
+    (fun root ->
+      match check_entry ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "type-purity") diags)
+
+let%test "implicit puts is std.basics code backed by basics shim" =
+  Discovery.with_temp_project
+    [ ("main.mr", "puts(42)\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          string_contains build_output.main_go "func puts_int64(value int64) struct{}"
+          && string_contains build_output.main_go "return extern__std_basics__puts_str(show_show_int64(value))"
+          && string_contains build_output.main_go "func extern__std_basics__puts_str(value string) struct{}"
+          && string_contains build_output.main_go {|mshim_std_basics "marmoset_out/shims/std/basics"|}
+          && Option.is_some
+               (List.find_opt
+                  (fun (file : Codegen.go_aux_file) -> String.equal file.rel_path "shims/std/basics/basics.go")
+                  build_output.aux_go_files)
+          && (not (string_contains build_output.main_go "marmoset.Puts"))
+          && not (string_contains build_output.main_go "std__basics__puts_u005fstr"))
+
+let%test "generic direct shim call specializes nested trait argument" =
+  Discovery.with_temp_project
+    [ ("main.mr", "puts(42)\n") ]
+    (fun root ->
+      let stdlib_root = Discovery.make_temp_dir "marmoset_direct_shim_stdlib_" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+        (fun () ->
+          Discovery.mkdir_p (Filename.concat stdlib_root "std");
+          match Discovery.resolve_toolchain_root () with
+          | Error _ -> false
+          | Ok toolchain_root -> (
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/prelude.mr")
+                (read_source_file (Filename.concat toolchain_root "std/prelude.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/option.mr")
+                (read_source_file (Filename.concat toolchain_root "std/option.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/result.mr")
+                (read_source_file (Filename.concat toolchain_root "std/result.mr"));
+              Discovery.write_file
+                (Filename.concat stdlib_root "std/basics.mr")
+                "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n";
+              match compile_entry_to_build ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
+              | Error _ -> false
+              | Ok build_output ->
+                  string_contains build_output.main_go
+                    "return extern__std_basics__puts_str(show_show_int64(value))"
+                  && (not (string_contains build_output.main_go "show_show_union_empty"))
+                  && not (string_contains build_output.main_go "std__basics__puts_u005fstr"))))
+
+let%test "imported constrained generics do not inherit local type variable constraints" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "shape Named = { name: Str }\nfn describe[t: Named](x: t) -> Str = x.name\nlet p = { name: \"milo\", age: 3 }\nputs(describe(p))\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> true
+      | Error _ -> false)
+
+let%test "imported constrained generic APIs seed hidden dependency traits" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.file\nimport std.path.Path\nlet target = Path(\"marmoset.tmp\")\nlet write_result = file.write(target, \"hi\")\nlet read_text: Result[Str, file.Error] = file.read(target)\nputs(0)\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> true
+      | Error _ -> false)
+
+let%test "shim S3: compile_entry_to_build emits support and api aux files for called std shim" =
+  Discovery.with_temp_project
+    [ ("main.mr", "import std.bytes\nputs(bytes.to_str_lossy(bytes.from_str(\"hi\")))\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          let paths =
+            build_output.aux_go_files
+            |> List.map (fun (file : Codegen.go_aux_file) -> file.rel_path)
+            |> List.sort String.compare
+          in
+          List.mem "api/std/bytes/api.go" paths && List.mem "marmoset/result.go" paths)
+
+let%test "shim S2: distinct std shim ids emit distinct adapter wrappers" =
+  Discovery.with_temp_project
+    [
+      ( "main.mr",
+        "import std.bytes\nimport std.file\nimport std.path.Path\nlet payload = bytes.from_str(\"hi\")\nlet write_result = file.write(Path(\"marmoset.tmp\"), payload)\nputs(bytes.to_str_lossy(payload))\n"
+      );
+    ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Error _ -> false
+      | Ok build_output ->
+          count_occurrences build_output.main_go "func extern__std_bytes__from_str(input string) marmoset.Bytes"
+          = 1
+          && count_occurrences build_output.main_go
+               "func extern__std_file__write_path(path std__path__Path, bytes marmoset.Bytes) Result_unit_std__file__Error"
+             = 1
+          && string_contains build_output.main_go "extern__std_bytes__from_str"
+          && string_contains build_output.main_go "extern__std_file__write_path")
+
+let%test "shim S2: direct Go package externs are rejected at project compile" =
+  Discovery.with_temp_project
+    [ ("main.mr", "extern \"strings\" = { fn ToUpper(s: Str) -> Str }\nlet value = strings.ToUpper(\"x\")\n") ]
+    (fun root ->
+      match compile_entry_to_build ~entry_file:(Filename.concat root "main.mr") () with
+      | Ok _ -> false
+      | Error diags -> List.exists (fun (diag : Diagnostic.t) -> diag.code = "shim-id-invalid") diags)
 
 let%test "check_entry reports non-exported namespace members clearly" =
   Discovery.with_temp_project
@@ -1475,7 +1990,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
   Discovery.with_temp_project
     [
       ( "main.mr",
-        "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
+        "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
       );
     ]
     (fun root ->
@@ -1483,7 +1998,7 @@ let%test "analyze_entry_with_source auto-loads std.prelude for headerless entrie
       let analysis =
         analyze_entry_with_source ~entry_file
           ~entry_source:
-            "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
+            "let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success(\"ok\")\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(Result.map(status, (msg: Str) -> msg + \"!\"), \"bad\"))\nputs(10 % 3)\n"
           ()
       in
       match (analysis.graph, analysis.project) with
@@ -1585,14 +2100,17 @@ let%test "std.option signature exports Option as an enum for downstream modules"
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           match Discovery.discover_project ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok graph -> (
@@ -1612,7 +2130,10 @@ let%test "std.option signature exports Option as an enum for downstream modules"
                                 match Hashtbl.find_opt rewrites module_id with
                                 | None -> false
                                 | Some rewrite -> (
-                                    match compile_module ~surfaces ~typed_signatures ~rewrite module_info with
+                                    match
+                                      compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[]
+                                        ~rewrite module_info
+                                    with
                                     | Error _ -> false
                                     | Ok checked_module ->
                                         Hashtbl.replace typed_signatures module_id checked_module.signature;
@@ -1627,6 +2148,46 @@ let%test "std.option signature exports Option as an enum for downstream modules"
                       in
                       compile_until_option graph.topo_order))))
 
+let with_temp_error_stdlib main_source f =
+  Discovery.with_temp_project
+    [ ("main.mr", main_source) ]
+    (fun root ->
+      let stdlib_root = Discovery.make_temp_dir "marmoset_error_model_stdlib_" in
+      Fun.protect
+        ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote stdlib_root)))
+        (fun () ->
+          Discovery.mkdir_p (Filename.concat stdlib_root "std");
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/prelude.mr")
+            "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/option.mr")
+            "export Option\ntype Option[a] = { Some(a), None }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/result.mr")
+            "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n";
+          Discovery.write_file
+            (Filename.concat stdlib_root "std/file.mr")
+            "export Error\ntype Error = { NotFound = \"File not found\" }\n";
+          f ~stdlib_root ~entry_file:(Filename.concat root "main.mr")))
+
+let%test "imported std.file.Error can be aliased only under an error name" =
+  with_temp_error_stdlib "import std.file.Error\ntype FileError = Error\nlet value = 1\nvalue\n"
+    (fun ~stdlib_root ~entry_file ->
+      match check_entry ~stdlib_root ~entry_file () with
+      | Ok diagnostics -> diagnostics = []
+      | Error _ -> false)
+
+let%test "imported std.file.Error rejects non-error alias name" =
+  with_temp_error_stdlib "import std.file.Error\ntype Problem = Error\nlet value = 1\nvalue\n"
+    (fun ~stdlib_root ~entry_file ->
+      match check_entry ~stdlib_root ~entry_file () with
+      | Error ({ Diagnostic.code = "error-alias-name"; _ } :: _) -> true
+      | _ -> false)
+
 let%test "source-backed module compilation sees std.option and std.result signatures before std.foo" =
   Discovery.with_temp_project
     [ ("main.mr", "import std.foo as foo\nputs(foo.value())\n") ]
@@ -1640,14 +2201,17 @@ let%test "source-backed module compilation sees std.option and std.result signat
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           let entry_file = Filename.concat root "main.mr" in
           match
             Discovery.discover_project_with_entry_source ~stdlib_root ~entry_file
@@ -1681,7 +2245,10 @@ let%test "source-backed module compilation sees std.option and std.result signat
                                   match Hashtbl.find_opt rewrites module_id with
                                   | None -> false
                                   | Some rewrite -> (
-                                      match compile_module ~surfaces ~typed_signatures ~rewrite module_info with
+                                      match
+                                        compile_module ~surfaces ~typed_signatures ~visible_dependency_modules:[]
+                                          ~rewrite module_info
+                                      with
                                       | Error _ -> false
                                       | Ok checked_module ->
                                           Hashtbl.replace typed_signatures module_id checked_module.signature;
@@ -1691,7 +2258,7 @@ let%test "source-backed module compilation sees std.option and std.result signat
 
 let%test "non-core stdlib modules implicitly see Option and Result" =
   Discovery.with_temp_project
-    [ ("main.mr", "import std.foo as foo\nputs(foo.value())\n") ]
+    [ ("main.mr", "import std.foo as foo\nfoo.value()\n") ]
     (fun root ->
       let stdlib_root = Discovery.make_temp_dir "marmoset_review_stdlib_" in
       Fun.protect
@@ -1702,14 +2269,17 @@ let%test "non-core stdlib modules implicitly see Option and Result" =
             (Filename.concat stdlib_root "std/prelude.mr")
             "export Ordering, Eq, Show, Debug, Ord, Hash, Num, Rem, Neg\ntype Ordering = { Less, Equal, Greater }\ntrait Eq[a] = { fn eq(x: a, y: a) -> Bool }\ntrait Show[a] = { fn show(x: a) -> Str }\ntrait Debug[a] = { fn debug(x: a) -> Str }\ntrait Ord[a]: Eq = { fn compare(x: a, y: a) -> Ordering }\ntrait Hash[a] = { fn hash(x: a) -> Int }\ntrait Num[a] = {\n\  fn add(x: a, y: a) -> a\n\  fn sub(x: a, y: a) -> a\n\  fn mul(x: a, y: a) -> a\n\  fn div(x: a, y: a) -> a\n}\ntrait Rem[a] = { fn rem(x: a, y: a) -> a }\ntrait Neg[a] = { fn neg(x: a) -> a }\n";
           Discovery.write_file
+            (Filename.concat stdlib_root "std/basics.mr")
+            "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n";
+          Discovery.write_file
             (Filename.concat stdlib_root "std/option.mr")
-            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn unwrap_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
+            "export Option\ntype Option[a] = { Some(a), None }\nimpl[a] Option[a] = {\n\  fn value_or(self: Option[a], fallback: a) -> a = match self {\n\    case Option.Some(v): v\n\    case Option.None: fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/result.mr")
             "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\nimpl[a, e] Result[a, e] = {\n\  fn value_or(self: Result[a, e], fallback: a) -> a = match self {\n\    case Result.Success(v): v\n\    case Result.Failure(_): fallback\n\  }\n}\n";
           Discovery.write_file
             (Filename.concat stdlib_root "std/foo.mr")
-            "export value\nfn value() -> Int = Option.unwrap_or(Option.Some(1), 0)\n";
+            "export value\nfn value() -> Int = Option.value_or(Option.Some(1), 0)\n";
           match check_entry ~stdlib_root ~entry_file:(Filename.concat root "main.mr") () with
           | Error _ -> false
           | Ok diagnostics -> diagnostics = []))
@@ -2001,13 +2571,13 @@ let%test "checked_module navigation keeps resolved imports for namespace and ali
 let%test "find_export_binding exposes exported definition metadata through compiler boundary" =
   Discovery.with_temp_project
     [
-      ("main.mr", "import math\nputs(math.make(1))\n");
+      ("main.mr", "import math\nlet p = math.make(1)\nputs(p.value)\n");
       ("math.mr", "export make, Point\ntype Point = { value: Int }\nfn make(x: Int) -> Point = { value: x }\n");
     ]
     (fun root ->
       let analysis =
         analyze_entry_with_source ~entry_file:(Filename.concat root "main.mr")
-          ~entry_source:"import math\nputs(math.make(1))\n" ()
+          ~entry_source:"import math\nlet p = math.make(1)\nputs(p.value)\n" ()
       in
       match
         ( find_export_binding analysis ~module_id:"math" ~surface_name:"make",

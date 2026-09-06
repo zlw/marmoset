@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	mshim_std_basics "marmoset_out/shims/std/basics"
+	"strconv"
+)
 
 type Box struct {
 	Data0 *u92_u005fnested_u005fconstructor_u005fpayload_u005fpattern_u005flowers__Option_int64
@@ -58,7 +62,23 @@ func (e u92_u005fnested_u005fconstructor_u005fpayload_u005fpattern_u005flowers__
 }
 
 
+func extern__std_basics__puts_str(value string) struct{} {
+	defer func() {
+		if __panic := recover(); __panic != nil {
+			panic(fmt.Sprintf("shim ABI violation at std/basics.puts_str: %v", __panic))
+		}
+	}()
+	mshim_std_basics.PutsStr(value)
+	return struct{}{}
+}
 
+func puts_int64(value int64) struct{} {
+    return extern__std_basics__puts_str(show_show_int64(value))
+}
+
+func show_show_int64(x int64) string {
+	return strconv.FormatInt(x, 10)
+}
 func main() {
     value := Box_Wrap(u92_u005fnested_u005fconstructor_u005fpayload_u005fpattern_u005flowers__Option_int64_Some(int64(41)))
     _ = value
@@ -82,5 +102,5 @@ func main() {
 		panic("unreachable: invalid enum tag")
     }
     _ = out
-    _ = puts(out)
+    _ = puts_int64(out)
 }

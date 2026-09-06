@@ -1,0 +1,4 @@
+# R003: top-level try still requires typed error values
+fn ok() -> Result[Str, Str] = Result.Success("value")
+
+let value = try ok()  # error: try requires Result error type to be an Error or *Error enum

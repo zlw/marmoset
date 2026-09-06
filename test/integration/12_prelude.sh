@@ -44,19 +44,100 @@ run_project_expect_output() {
     rm -rf "$root"
 }
 
+run_project_expect_failure() {
+    local name="$1"
+    local expected_status="$2"
+    local expected_output="$3"
+    local source="$4"
+
+    TOTAL=$((TOTAL + 1))
+    echo -n "TEST [$TOTAL] $name ... "
+
+    local root
+    local binpath
+    local build_output
+    local output
+    local status
+    root=$(mktemp -d marmoset_prelude_project.XXXXXX)
+    binpath=$(mktemp "$REPO_ROOT/.marmoset/build/marmoset_prelude_bin.XXXXXX")
+    rm -f "$binpath"
+
+    printf "%s" "$source" > "$root/main.mr"
+
+    if build_output=$($EXECUTABLE build "$root/main.mr" -o "$binpath" 2>&1); then
+        set +e
+        output=$("$binpath" 2>&1)
+        status=$?
+        set -e
+
+        if [ "$status" -eq "$expected_status" ] && [ "$output" = "$expected_output" ]; then
+            echo "✓ PASS"
+            PASS=$((PASS + 1))
+        else
+            echo "✗ FAIL (expected status $expected_status and output '$expected_output', got status $status and output '$output')"
+            FAIL=$((FAIL + 1))
+        fi
+    else
+        echo "✗ FAIL (build failed)"
+        echo "  Build output: $build_output"
+        FAIL=$((FAIL + 1))
+    fi
+
+    rm -f "$binpath"
+    rm -rf "$root"
+}
+
 run_project_expect_output \
     "headerless entry auto-loads prelude sums, traits, and operators" \
     $'1\n42\nok\ntrue' \
-    $'let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success("ok")\nputs(Show.show(10 % 3))\nputs(Option.unwrap_or(opt, 0))\nputs(Result.value_or(status, "bad"))\nputs(Eq.eq(1 + 2, 3))\n'
+    $'let opt: Option[Int] = Option.Some(42)\nlet status: Result[Str, Int] = Result.Success("ok")\nputs(Show.show(10 % 3))\nputs(Option.value_or(opt, 0))\nputs(Result.value_or(status, "bad"))\nputs(Eq.eq(1 + 2, 3))\n'
 
 run_project_expect_output \
     "Option helpers are available as inherent methods without extra imports" \
-    $'43\n7\ntrue\ntrue' \
-    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.unwrap_or(absent, 7))\nputs(Option.is_some(bound))\nputs(Option.is_none(absent))\n'
+    $'43\n7' \
+    $'let absent: Option[Int] = Option.None\nlet lifted = Option.map(Option.Some(41), (x: Int) -> x + 1)\nlet bound = Option.bind(lifted, (x: Int) -> Option.Some(x + 1))\nmatch bound {\n  case Option.Some(v): puts(v)\n  case Option.None: puts(0)\n}\nputs(Option.value_or(absent, 7))\n'
+
+expect_reject \
+    "Option predicate helpers are not part of the minimal API" \
+    "Type 'Option' has no constructor or inherent method 'some?'" \
+    $'let present = Option.Some(1)\nputs(Option.some?(present))\n'
 
 run_project_expect_output \
     "Result helpers are available as inherent methods without extra imports" \
-    $'42\nerr!\n43\n0\ntrue\ntrue' \
-    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nlet rendered = Result.map(ok_num, (n: Int) -> Show.show(n))\nmatch rendered {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts("bad")\n}\nlet boom = Result.or(failed, (e: Str) -> e + "!")\nmatch boom {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts(msg)\n}\nlet next = Result.bind(ok_num, (x: Int) -> Result.Success(x + 1))\nmatch next {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\nputs(Result.value_or(failed, 0))\nputs(Result.success?(ok_num))\nputs(Result.failure?(failed))\n'
+    $'42\nerr!\n43\n0' \
+    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nlet rendered = Result.map(ok_num, (n: Int) -> Show.show(n))\nmatch rendered {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts("bad")\n}\nlet boom = Result.wrap(failed, (e: Str) -> e + "!")\nmatch boom {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts(msg)\n}\nlet next = Result.bind(ok_num, (x: Int) -> Result.Success(x + 1))\nmatch next {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\nputs(Result.value_or(failed, 0))\n'
+
+run_project_expect_output \
+    "Result.wrap preserves successes and wraps failures" \
+    $'ok:42\nfail:err!' \
+    $'let ok_num: Result[Int, Str] = Result.Success(42)\nlet failed: Result[Int, Str] = Result.Failure("err")\nmatch Result.wrap(ok_num, (e: Str) -> e + "!") {\n  case Result.Success(v): puts("ok:" + Show.show(v))\n  case Result.Failure(_): puts("bad")\n}\nmatch Result.wrap(failed, (e: Str) -> e + "!") {\n  case Result.Success(_): puts("bad")\n  case Result.Failure(msg): puts("fail:" + msg)\n}\n'
+
+run_project_expect_output \
+    "Result.bind is effect-polymorphic over its callback" \
+    $'43\n10\n12' \
+    $'fn pure_step(r: Result[Int, Str]) -> Result[Int, Str] =\n  Result.bind(r, (x: Int) -> Result.Success(x + 1))\n\nfn effect_step(r: Result[Int, Str]) => Result[Int, Str] =\n  Result.bind(r, (x: Int) => {\n    puts(x)\n    Result.Success(x + 2)\n  })\n\nlet pure_result = pure_step(Result.Success(42))\nmatch pure_result {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\n\nlet effect_result = effect_step(Result.Success(10))\nmatch effect_result {\n  case Result.Success(v): puts(v)\n  case Result.Failure(_): puts(0)\n}\n'
+
+run_project_expect_output \
+    "std.error exposes canonical messages and hidden construction frames" \
+    $'File not found\ntrue\nmatched' \
+    $'import std.error\n\ntype FileError = { NotFound(Str) = "File not found" }\n\nlet err = FileError.NotFound("missing")\nlet _ = error.context(err)\nputs(error.message(err))\nputs(Show.show(len(error.frames(err)) > 0))\nmatch err {\n  case FileError.NotFound(_): puts("matched")\n}\n'
+
+run_project_expect_failure \
+    "top-level try prints Result failures and exits nonzero" \
+    1 \
+    $'Boom' \
+    $'type Error = { Boom = "Boom" }\n\nfn fail() -> Result[Int, Error] = Result.Failure(Error.Boom)\n\nlet value = try fail()\nputs(value)\n'
+
+run_project_expect_failure \
+    "top-level try wrap prints the adapted Result failure" \
+    1 \
+    $'Outer failure' \
+    $'type InnerError = { Missing = "Missing" }\ntype OuterError = { Inner(InnerError) = "Outer failure" }\n\nfn fail() -> Result[Int, InnerError] = Result.Failure(InnerError.Missing)\n\nlet value = try fail() wrap OuterError.Inner\nputs(value)\n'
+
+run_project_expect_failure \
+    "top-level try exits nonzero for Option.None" \
+    1 \
+    "" \
+    $'fn absent() -> Option[Int] = Option.None\n\nlet value = try absent()\nputs(value)\n'
 
 suite_end

@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
@@ -9,59 +8,25 @@ import {
 
 let client: LanguageClient | undefined;
 
-function parentDir(dir: string): string | undefined {
-  const parent = path.dirname(dir);
-  return parent === dir ? undefined : parent;
-}
-
-function ancestorDirs(startDir: string): string[] {
-  const dirs: string[] = [];
-  let current = path.resolve(startDir);
-
-  while (true) {
-    dirs.push(current);
-    const parent = parentDir(current);
-    if (!parent) {
-      return dirs;
-    }
-    current = parent;
-  }
-}
-
-function hasToolchainStdlib(root: string): boolean {
-  return fs.existsSync(path.join(root, "std", "prelude.mr"));
-}
-
-function resolveMarmosetRoot(startDir: string | undefined): string | undefined {
-  if (!startDir) {
-    return undefined;
-  }
-
-  return ancestorDirs(startDir).find(hasToolchainStdlib);
-}
-
 function repoBinaryPath(marmosetRoot: string): string {
   return path.join(marmosetRoot, "marmoset");
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const config = vscode.workspace.getConfiguration("marmoset");
-  const serverPath = config.get<string>("lsp.path", "marmoset");
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const marmosetRoot = resolveMarmosetRoot(workspaceRoot);
-  const env = { ...process.env };
+  const marmosetRoot = process.env.MARMOSET_ROOT;
 
-  if (marmosetRoot) {
-    env.MARMOSET_ROOT = marmosetRoot;
+  if (!marmosetRoot) {
+    void vscode.window.showErrorMessage(
+      "MARMOSET_ROOT is not set; set it to the Marmoset repo root"
+    );
+    return;
   }
 
-  const command =
-    serverPath === "marmoset" && marmosetRoot
-      ? repoBinaryPath(marmosetRoot)
-      : serverPath;
+  const env = { ...process.env, MARMOSET_ROOT: marmosetRoot };
 
   const serverOptions: ServerOptions = {
-    command,
+    command: repoBinaryPath(marmosetRoot),
     args: ["lsp"],
     options: {
       cwd: workspaceRoot,

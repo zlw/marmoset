@@ -1,0 +1,35 @@
+# R014: try wrap in generic helpers emits concrete Result temporaries
+type DecodeError = {
+  Bad = "Bad decode",
+}
+
+type Error = {
+  Decode(DecodeError) = "Decode failed",
+}
+
+trait Decode[a] = {
+  fn decode(input: Str) -> Result[a, DecodeError]
+}
+
+impl Decode[Str] = {
+  fn decode(input: Str) -> Result[Str, DecodeError] = Result.Success(input)
+}
+
+impl Decode[Int] = {
+  fn decode(_input: Str) -> Result[Int, DecodeError] = Result.Success(42)
+}
+
+fn adapt[a: Decode](input: Str) -> Result[a, Error] = {
+  let value = try Decode.decode(input) wrap Error.Decode
+  Result.Success(value)
+}
+
+match adapt[Str]("ok") {
+  case Result.Success(value): puts(value)  # output: ok
+  case Result.Failure(_): puts("bad")
+}
+
+match adapt[Int]("ok") {
+  case Result.Success(value): puts(Show.show(value))  # output: 42
+  case Result.Failure(_): puts("bad")
+}

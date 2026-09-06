@@ -1,0 +1,20 @@
+# R002: try wrap constructs the outer error while preserving the typed cause
+type InnerError = {
+  Missing = "Inner missing",
+}
+
+type OuterError = {
+  Inner(InnerError) = "Outer failed",
+}
+
+fn inner() -> Result[Str, InnerError] = Result.Failure(InnerError.Missing)
+
+fn outer() -> Result[Str, OuterError] = {
+  let value = try inner() wrap OuterError.Inner
+  Result.Success(value)
+}
+
+match outer() {
+  case Result.Success(_): puts("unexpected")
+  case Result.Failure(OuterError.Inner(InnerError.Missing)): puts("wrapped")  # output: wrapped
+}

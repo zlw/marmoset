@@ -5,17 +5,18 @@ module Ast = Marmoset.Lib.Ast
 module Infer = Marmoset.Lib.Infer
 module Types = Marmoset.Lib.Types
 module Compiler = Marmoset.Lib.Frontend_compiler
+module Resolution_artifacts = Typecheck.Resolution_artifacts
 module Import_resolver = Frontend.Import_resolver
 module Trait_registry = Typecheck.Trait_registry
 module Inherent_registry = Typecheck.Inherent_registry
 module Structural = Typecheck.Structural
 
-(* Decompose a curried TFun into a flat param list, return type, and overall purity. *)
-let rec collect_params eff = function
-  | Types.TFun (arg, rest, is_eff) ->
-      let params, ret, eff' = collect_params (eff || is_eff) rest in
-      (arg :: params, ret, eff')
-  | t -> ([], t, eff)
+(* Decompose a curried TFun into a flat param list, return type, and overall effect. *)
+let rec collect_params effect = function
+  | Types.TFun (arg, rest, next_effect) ->
+      let params, ret, effect' = collect_params (Types.combine_effect effect next_effect) rest in
+      (arg :: params, ret, effect')
+  | t -> ([], t, effect)
 
 (* Info about an enclosing call site found by AST walking *)
 type call_info = {
@@ -203,6 +204,10 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
         List.iter (fun (f : Ast.AST.record_field) -> Option.iter visit_expr f.field_value) fields;
         Option.iter visit_expr spread
     | Ast.AST.EnumConstructor (_, _, args) -> List.iter visit_expr args
+    | Ast.AST.Try { tried; fallback; _ } ->
+        visit_expr tried;
+        Option.iter visit_expr fallback
+    | Ast.AST.Wrap { wrapped; _ } -> visit_expr wrapped
     | Ast.AST.TypeCheck (e, _) -> visit_expr e
     | Ast.AST.BlockExpr stmts -> List.iter visit_stmt stmts
     | Ast.AST.Identifier _ | Ast.AST.Integer _ | Ast.AST.Float _ | Ast.AST.Boolean _ | Ast.AST.String _ -> ()
@@ -213,8 +218,9 @@ let find_enclosing_call ~(source : string) (offset : int) (program : Ast.AST.pro
     | Ast.AST.Return e -> visit_expr e
     | Ast.AST.Block stmts -> List.iter visit_stmt stmts
     | Ast.AST.ExportDecl _ | Ast.AST.ImportDecl _ -> ()
-    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _ | Ast.AST.ImplDef _
-    | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _ ->
+    | Ast.AST.EnumDef _ | Ast.AST.TypeDef _ | Ast.AST.ExternTypeDef _ | Ast.AST.ShapeDef _ | Ast.AST.TraitDef _
+    | Ast.AST.ImplDef _ | Ast.AST.InherentImplDef _ | Ast.AST.DeriveDef _ | Ast.AST.TypeAlias _
+    | Ast.AST.ExternBlock _ ->
         ()
   in
   List.iter visit_stmt program;
@@ -269,7 +275,7 @@ let build_label
     ~(param_names : string list)
     ~(param_types : Types.mono_type list)
     ~(ret_type : Types.mono_type)
-    ~(is_effectful : bool)
+    ~(effect : Types.effect)
     ~(fn_display_name : string) : string * (int * int) list =
   let param_names_arr = Array.of_list param_names in
   let param_name_count = Array.length param_names_arr in
@@ -294,11 +300,8 @@ let build_label
       let stop = Buffer.length buf in
       offsets := (start, stop) :: !offsets)
     param_types;
-  Buffer.add_string buf
-    (if is_effectful then
-       ") => "
-     else
-       ") -> ");
+  Buffer.add_char buf ')';
+  Buffer.add_string buf (Types.effect_to_arrow effect);
   Buffer.add_string buf (Source_syntax.mono_type_to_source ret_type);
   (Buffer.contents buf, List.rev !offsets)
 
@@ -340,23 +343,23 @@ let signature_help
             match namespace_fn_type with
             | Some _ as info -> info
             | None -> (
-                match (call.recv_id, Infer.lookup_method_resolution call.fn_id) with
-                | Some recv_id, Some Infer.FieldFunctionCall -> (
+                match (call.recv_id, Infer.lookup_call_resolution call.fn_id) with
+                | Some recv_id, Some Resolution_artifacts.FieldFunctionCall -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | Some recv_type -> (
                         match Structural.lookup_field_type recv_type mname with
                         | Some field_type -> Some (`FnType field_type)
                         | None -> None)
                     | None -> None)
-                | Some recv_id, Some (Infer.TraitMethod trait_name)
-                | Some recv_id, Some (Infer.DynamicTraitMethod trait_name)
-                | Some recv_id, Some (Infer.QualifiedTraitMethod trait_name) -> (
+                | Some recv_id, Some (Resolution_artifacts.TraitMethod trait_name)
+                | Some recv_id, Some (Resolution_artifacts.DynamicTraitMethod trait_name)
+                | Some recv_id, Some (Resolution_artifacts.QualifiedTraitMethod trait_name) -> (
                     match Trait_registry.lookup_trait_method_with_supertraits trait_name mname with
                     | Some (_source_trait, method_sig) ->
                         let param_types = List.map snd method_sig.method_params in
                         let param_names = List.map fst method_sig.method_params in
-                        let is_effectful = method_sig.method_effect = `Effectful in
-                        Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                        let effect = Infer.effect_of_trait_effect method_sig.method_effect in
+                        Some (`Method (param_types, method_sig.method_return_type, param_names, effect))
                     | None -> (
                         match Hashtbl.find_opt type_map recv_id with
                         | None -> None
@@ -366,21 +369,22 @@ let signature_help
                             | Some (_trait_name, method_sig) ->
                                 let param_types = List.map snd method_sig.method_params in
                                 let param_names = List.map fst method_sig.method_params in
-                                let is_effectful = method_sig.method_effect = `Effectful in
-                                Some
-                                  (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
-                            )))
-                | Some recv_id, Some Infer.InherentMethod | Some recv_id, Some Infer.QualifiedInherentMethod -> (
+                                let effect = Infer.effect_of_trait_effect method_sig.method_effect in
+                                Some (`Method (param_types, method_sig.method_return_type, param_names, effect))))
+                    )
+                | Some recv_id, Some Resolution_artifacts.InherentMethod
+                | Some recv_id, Some Resolution_artifacts.QualifiedInherentMethod -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | Some recv_type -> (
                         match Inherent_registry.resolve_method recv_type mname with
                         | Ok (Some method_sig) ->
                             let param_types = List.map snd method_sig.method_params in
                             let param_names = List.map fst method_sig.method_params in
-                            let is_effectful = method_sig.method_effect = `Effectful in
-                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
+                            let effect = Infer.effect_of_trait_effect method_sig.method_effect in
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, effect))
                         | Ok None | Error _ -> None)
                     | None -> None)
+                | _, Some (Resolution_artifacts.ShimQualifiedCall _) -> None
                 | Some recv_id, None -> (
                     match Hashtbl.find_opt type_map recv_id with
                     | None -> None
@@ -390,9 +394,8 @@ let signature_help
                         | Some (_trait_name, method_sig) ->
                             let param_types = List.map snd method_sig.method_params in
                             let param_names = List.map fst method_sig.method_params in
-                            let is_effectful = method_sig.method_effect = `Effectful in
-                            Some (`Method (param_types, method_sig.method_return_type, param_names, is_effectful))
-                        ))
+                            let effect = Infer.effect_of_trait_effect method_sig.method_effect in
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, effect))))
                 | None, _ -> None))
         | None -> (
             match Hashtbl.find_opt type_map call.fn_id with
@@ -408,14 +411,13 @@ let signature_help
       match fn_type_opt with
       | None -> None
       | Some info -> (
-          let param_types, ret_type, is_effectful, method_param_names =
+          let param_types, ret_type, effect, method_param_names =
             match info with
             | `FnType fn_type ->
                 let norm = Types.normalize fn_type in
-                let params, ret, eff = collect_params false norm in
+                let params, ret, eff = collect_params Types.Pure norm in
                 (params, ret, eff, None)
-            | `Method (ptypes, ret, pnames, is_effectful) ->
-                (ptypes, Types.normalize ret, is_effectful, Some pnames)
+            | `Method (ptypes, ret, pnames, effect) -> (ptypes, Types.normalize ret, effect, Some pnames)
           in
           match param_types with
           | [] -> None
@@ -436,9 +438,7 @@ let signature_help
                         | None -> [])
                     | None -> [])
               in
-              let label, offsets =
-                build_label ~param_names ~param_types ~ret_type ~is_effectful ~fn_display_name
-              in
+              let label, offsets = build_label ~param_names ~param_types ~ret_type ~effect ~fn_display_name in
               let parameters =
                 List.map
                   (fun (start, stop) -> Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())

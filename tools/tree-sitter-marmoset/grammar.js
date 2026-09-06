@@ -30,6 +30,7 @@ module.exports = grammar({
 
   conflicts: ($) => [
     [$._expression, $.lambda_parameter],
+    [$._expression, $._wrap_operand],
     [$.block, $.object_literal],
   ],
 
@@ -47,9 +48,11 @@ module.exports = grammar({
         $.return_statement,
         $.enum_definition,
         $.type_definition,
+        $.extern_type_definition,
         $.shape_definition,
         $.trait_definition,
         $.impl_block,
+        $.extern_block,
         $.expression_statement,
       ),
 
@@ -102,7 +105,7 @@ module.exports = grammar({
         "(",
         commaSep($.parameter),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         "=",
         field("body", $.expr_or_block),
         optional(";"),
@@ -124,6 +127,7 @@ module.exports = grammar({
       seq(
         field("name", alias($.constructor_name, $.identifier)),
         optional(seq("(", commaSep1($._type), ")")),
+        optional(seq("=", field("message", $.string_literal))),
       ),
 
     trait_definition: ($) =>
@@ -146,7 +150,7 @@ module.exports = grammar({
         "(",
         commaSep($.trait_sig_param),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         optional(seq("=", field("body", $.expr_or_block))),
       ),
 
@@ -201,7 +205,7 @@ module.exports = grammar({
         "(",
         commaSep($.parameter),
         ")",
-        optional(seq(choice("->", "=>"), field("return_type", $._type))),
+        optional(seq(choice("->", "=>", "~>"), field("return_type", $._type))),
         "=",
         field("body", $.expr_or_block),
       ),
@@ -221,6 +225,45 @@ module.exports = grammar({
         field("type", choice($.wrapper_type, $.constructor_type_body, $._type)),
         optional(field("derive", $.derive_clause)),
       )),
+
+    extern_type_definition: ($) =>
+      seq(
+        "extern",
+        "type",
+        field("name", $.identifier),
+        optional(";"),
+      ),
+
+    extern_block: ($) =>
+      seq(
+        "extern",
+        field("shim", $.string_literal),
+        optional(seq("as", field("alias", $.identifier))),
+        "=",
+        "{",
+        repeat($.extern_fn_signature),
+        "}",
+        optional(";"),
+      ),
+
+    extern_fn_signature: ($) =>
+      seq(
+        "fn",
+        field("name", $.identifier),
+        "(",
+        commaSep($.extern_parameter),
+        ")",
+        choice("->", "=>"),
+        field("return_type", $._type),
+        optional(";"),
+      ),
+
+    extern_parameter: ($) =>
+      seq(
+        field("name", $.identifier),
+        ":",
+        field("type", $._type),
+      ),
 
     wrapper_type: ($) =>
       prec(2, seq(
@@ -251,16 +294,22 @@ module.exports = grammar({
         $.parenthesized_type,
       ),
 
-    _simple_type: ($) => choice($.type_identifier, $.type_variable),
+    _simple_type: ($) => choice($.type_identifier, $.qualified_type, $.type_variable),
 
     type_identifier: ($) =>
       token(choice("Int", "Str", "Bool", "Float", "Unit", "List", "Map")),
 
     type_variable: ($) => choice(alias($.constructor_name, $.identifier), $.identifier),
 
+    qualified_type: ($) =>
+      prec(2, seq(
+        field("module", $.identifier),
+        repeat1(seq(".", field("name", choice(alias($.constructor_name, $.identifier), $.identifier)))),
+      )),
+
     generic_type: ($) =>
       prec(1, seq(
-        field("name", choice($.type_identifier, alias($.constructor_name, $.identifier), $.identifier)),
+        field("name", choice($.type_identifier, $.qualified_type, alias($.constructor_name, $.identifier), $.identifier)),
         "[",
         commaSep1(field("arg", $._type)),
         "]",
@@ -275,7 +324,7 @@ module.exports = grammar({
       ),
 
     function_type: ($) =>
-      seq("(", commaSep($._type), ")", choice("->", "=>"), field("return_type", $._type)),
+      seq("(", commaSep($._type), ")", choice("->", "=>", "~>"), field("return_type", $._type)),
 
     parenthesized_type: ($) => seq("(", $._type, ")"),
 
@@ -341,6 +390,31 @@ module.exports = grammar({
         $.parenthesized_expression,
         $.if_expression,
         $.match_expression,
+        $.try_expression,
+        $.wrap_expression,
+        $.call_expression,
+        $.field_access,
+        $.index_expression,
+      ),
+
+    _wrap_operand: ($) =>
+      choice(
+        $.placeholder,
+        $.identifier,
+        $.integer_literal,
+        $.float_literal,
+        $.string_literal,
+        $.boolean_literal,
+        $.array_literal,
+        $.object_literal,
+        $.prefix_expression,
+        $.infix_expression,
+        $.is_expression,
+        $.lambda_expression,
+        $.parenthesized_expression,
+        $.if_expression,
+        $.match_expression,
+        $.wrap_expression,
         $.call_expression,
         $.field_access,
         $.index_expression,
@@ -461,13 +535,62 @@ module.exports = grammar({
     match_arm: ($) =>
       seq("case", field("pattern", $._pattern), ":", field("body", $.expr_or_block)),
 
+    try_expression: ($) =>
+      choice(
+        prec.dynamic(
+          1,
+          prec.right(
+            PREC.PREFIX,
+            seq("try", field("value", $._expression), "wrap", field("target", $.wrap_target)),
+          ),
+        ),
+        prec.right(
+          PREC.PREFIX,
+          seq("try", field("value", $._expression), "or", field("fallback", $._expression)),
+        ),
+        prec.right(
+          PREC.PREFIX,
+          seq("try", field("value", $._expression)),
+        ),
+      ),
+
+    wrap_expression: ($) =>
+      prec.left(
+        PREC.PIPE,
+        seq(
+          field("value", $._wrap_operand),
+          "wrap",
+          field("target", $.wrap_target),
+        ),
+      ),
+
+    wrap_target: ($) =>
+      choice($.simple_wrap_target, $.qualified_wrap_target),
+
+    simple_wrap_target: ($) =>
+      seq(
+        field("type", alias($.constructor_name, $.identifier)),
+        ".",
+        field("variant", alias($.constructor_name, $.identifier)),
+      ),
+
+    qualified_wrap_target: ($) =>
+      seq(
+        field("module", $.identifier),
+        repeat(seq(".", field("module", $.identifier))),
+        ".",
+        field("type", alias($.constructor_name, $.identifier)),
+        ".",
+        field("variant", alias($.constructor_name, $.identifier)),
+      ),
+
     lambda_expression: ($) =>
       prec.right(
         seq(
           "(",
           commaSep($.lambda_parameter),
           ")",
-          choice("->", "=>"),
+          choice("->", "=>", "~>"),
           field("body", $.expr_or_block),
         ),
       ),

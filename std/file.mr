@@ -1,0 +1,124 @@
+import std.bytes
+import std.bytes.Bytes
+import std.bytes.Decode
+import std.bytes.DecodeError
+import std.bytes.Encode
+import std.io
+import std.path
+
+export File, Mode, Error, UseError, read, write, append, open, read_all, read_line, read_chunk, write_all, flush
+
+extern type File
+
+type Mode = { Read, Write, Append }
+
+type Error = {
+  NotFound                 = "File not found",
+  PermissionDenied         = "You do not have permission to access this file",
+  AlreadyExists            = "File already exists",
+  IsDirectory              = "Expected a file but found a directory",
+  NotDirectory             = "Expected a directory but found a file",
+  InvalidPath(Str)         = "Path is invalid",
+  InvalidData(DecodeError) = "File contains invalid data",
+  AlreadyClosed            = "File is already closed",
+  Other(Str)               = "File operation failed",
+}
+
+type UseError[e] = {
+  Open(Error)           = "Could not open file",
+  Use(e)                = "File callback failed",
+  Close(Error)          = "Could not close file",
+  UseAndClose(e, Error) = "File callback failed and close also failed",
+}
+
+extern "std/file" as file_shim = {
+  fn read_path(path: path.Path) => Result[Bytes, Error]
+  fn write_path(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn append_path(path: path.Path, bytes: Bytes) => Result[Unit, Error]
+  fn open_handle(path: path.Path, mode: Mode) => Result[File, Error]
+  fn close_handle(file: File) => Result[Unit, Error]
+  fn read_handle(file: File) => Result[Bytes, Error]
+  fn read_line_handle(file: File) => Result[Option[Bytes], Error]
+  fn read_chunk_handle(file: File, size: Int) => Result[Option[Bytes], Error]
+  fn write_handle(file: File, bytes: Bytes) => Result[Unit, Error]
+  fn flush_handle(file: File) => Result[Unit, Error]
+}
+
+fn decode_bytes[a: Decode](payload: Bytes) -> Result[a, Error] =
+  bytes.Decode.decode(payload) wrap Error.InvalidData
+
+fn decode_optional_bytes[a: Decode](payload: Option[Bytes]) -> Result[Option[a], Error] = {
+  match payload {
+    case Option.None: Result.Success(Option.None)
+    case Option.Some(bytes): {
+      decode_bytes(bytes)
+      |> Result.map(Option.Some(_))
+    }
+  }
+}
+
+fn read[a: Decode](path: path.Path) => Result[a, Error] = {
+  file_shim.read_path(path)
+  |> Result.bind((payload: Bytes) -> decode_bytes(payload))
+}
+
+fn write[a: Encode](path: path.Path, value: a) => Result[Unit, Error] = {
+  bytes.Encode.encode(value)
+  |> file_shim.write_path(path, _)
+}
+
+fn append[a: Encode](path: path.Path, value: a) => Result[Unit, Error] = {
+  bytes.Encode.encode(value)
+  |> file_shim.append_path(path, _)
+}
+
+impl io.Read[File, Error] = {
+  fn read(file: File) => Result[Str, Error] = {
+    file_shim.read_handle(file)
+    |> Result.bind((payload: Bytes) -> decode_bytes(payload))
+  }
+}
+
+impl io.Write[File, Error] = {
+  fn write(file: File, value: Str) => Result[Unit, Error] = {
+    bytes.Encode.encode(value)
+    |> file_shim.write_handle(file, _)
+  }
+
+  fn flush(file: File) => Result[Unit, Error] = {
+    file_shim.flush_handle(file)
+  }
+}
+
+fn read_all(file: File) => Result[Str, Error] =
+  io.Read.read(file)
+
+fn read_line(file: File) => Result[Option[Str], Error] = {
+  file_shim.read_line_handle(file)
+  |> Result.bind((payload: Option[Bytes]) -> decode_optional_bytes(payload))
+}
+
+fn read_chunk(file: File, size: Int) => Result[Option[Bytes], Error] =
+  file_shim.read_chunk_handle(file, size)
+
+fn write_all(file: File, value: Str) => Result[Unit, Error] =
+  io.Write.write(file, value)
+
+fn flush(file: File) => Result[Unit, Error] =
+  io.Write.flush(file)
+
+fn open[a, e](path: path.Path, mode: Mode, body: (File) => Result[a, e]) => Result[a, UseError[e]] = {
+  let file = try file_shim.open_handle(path, mode) wrap UseError.Open
+  let body_result = body(file)
+
+  match file_shim.close_handle(file) {
+    case Result.Success(_): match body_result {
+      case Result.Success(value): Result.Success(value)
+      case Result.Failure(err): Result.Failure(UseError.Use(err))
+    }
+    case Result.Failure(close_err): match body_result {
+      case Result.Success(_): Result.Failure(UseError.Close(close_err))
+      case Result.Failure(err): Result.Failure(UseError.UseAndClose(err, close_err))
+    }
+  }
+}

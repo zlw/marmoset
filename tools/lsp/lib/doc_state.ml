@@ -159,6 +159,17 @@ let with_temp_project (files : (string * string) list) (f : string -> bool) : bo
   List.iter write_one files;
   Fun.protect ~finally:(fun () -> ignore (Sys.command ("rm -rf " ^ Filename.quote root))) (fun () -> f root)
 
+let with_env_var name value f =
+  let prior = Sys.getenv_opt name in
+  Fun.protect
+    ~finally:(fun () ->
+      match prior with
+      | Some prior -> Unix.putenv name prior
+      | None -> Unix.putenv name "")
+    (fun () ->
+      Unix.putenv name value;
+      f ())
+
 (* ============================================================
    Tests
    ============================================================ *)
@@ -215,6 +226,25 @@ let%test "analyze with builtins works" =
   let result = analyze ~source:"len([1, 2, 3])" in
   result.diagnostics = [] && result.type_map <> None
 
+let%test "analyze modern trait and predicate syntax" =
+  let result =
+    analyze
+      ~source:
+        {|
+          trait Read[r, e] = {
+            fn read(reader: r) => Result[Str, e]
+          }
+
+          type Path = Path(Str)
+
+          fn absolute?(path: Path) -> Bool = true
+
+          let path = Path("/tmp")
+          absolute?(path)
+        |}
+  in
+  result.diagnostics = [] && result.surface_program <> None && result.program <> None
+
 let%test "analyze successful code surfaces warning diagnostics" =
   let result =
     analyze
@@ -265,6 +295,64 @@ let%test "analyze_with_file_id uses module-aware checking for imported files" =
       && result.surface_program <> None
       && result.program <> None
       && result.compiler_analysis <> None)
+
+let%test "analyze_with_file_id treats direct stdlib entries as std modules" =
+  with_temp_project
+    [
+      ("std/prelude.mr", "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n");
+      ( "std/basics.mr",
+        "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n"
+      );
+      ("std/option.mr", "export Option\ntype Option[a] = { Some(a), None }\n");
+      ("std/result.mr", "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n");
+    ]
+    (fun root ->
+      with_env_var "MARMOSET_ROOT" root (fun () ->
+          let file_id = Filename.concat root "std/basics.mr" in
+          let source_root = Filename.dirname file_id in
+          let source =
+            "import std.prelude.Show\n\nexport puts\n\nextern \"std/basics\" as basics_shim = {\n\  fn puts_str(value: Str) => Unit\n}\n\nfn puts[a: Show](value: a) => Unit = basics_shim.puts_str(Show.show(value))\n"
+          in
+          let result = analyze_with_file_id ~source_root ~file_id ~source () in
+          result.module_id = Some "std.basics"
+          && result.project_root = Some root
+          && not
+               (List.exists
+                  (fun (diag : Lsp_t.Diagnostic.t) ->
+                    match diag.message with
+                    | `String message ->
+                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/basics\"" message
+                    | _ -> false)
+                  result.diagnostics)))
+
+let%test "analyze_with_file_id treats direct non-core stdlib shim entries as std modules" =
+  let file_source =
+    "import std.bytes.Bytes\n\nexport File, Mode, Error, UseError\n\nextern type File\n\ntype Mode = { Read, Write, Append }\ntype Error = { NotFound = \"File not found\", PermissionDenied = \"Permission denied\", IsDirectory = \"Path is a directory\", AlreadyClosed = \"File is already closed\", Other(Str) = \"File error\" }\ntype UseError[e] = { Open(Error) = \"Failed to open file\", Use(e) = \"File operation failed\", Close(Error) = \"Failed to close file\", UseAndClose(e, Error) = \"File operation and close failed\" }\n\nextern \"std/file\" as file_shim = {\n  fn read_path(path: Str) => Result[Bytes, Error]\n  fn write_path(path: Str, bytes: Bytes) => Result[Unit, Error]\n  fn open_handle(path: Str, mode: Mode) => Result[File, Error]\n  fn close_handle(file: File) => Result[Unit, Error]\n}\n"
+  in
+  with_temp_project
+    [
+      ("std/prelude.mr", "export Show\ntrait Show[a] = { fn show(value: a) -> Str }\n");
+      ("std/basics.mr", "import std.prelude.Show\nexport puts\nfn puts[a: Show](value: a) => Unit = {}\n");
+      ("std/option.mr", "export Option\ntype Option[a] = { Some(a), None }\n");
+      ("std/result.mr", "export Result\ntype Result[a, e] = { Success(a), Failure(e) }\n");
+      ("std/bytes.mr", "export Bytes\nextern type Bytes\n");
+      ("std/file.mr", file_source);
+    ]
+    (fun root ->
+      with_env_var "MARMOSET_ROOT" root (fun () ->
+          let file_id = Filename.concat root "std/file.mr" in
+          let source_root = Filename.dirname file_id in
+          let result = analyze_with_file_id ~source_root ~file_id ~source:file_source () in
+          result.module_id = Some "std.file"
+          && result.project_root = Some root
+          && not
+               (List.exists
+                  (fun (diag : Lsp_t.Diagnostic.t) ->
+                    match diag.message with
+                    | `String message ->
+                        Diagnostics.String_utils.contains_substring ~needle:"shim \"std/file\"" message
+                    | _ -> false)
+                  result.diagnostics)))
 
 let%test "analyze helper uses module-aware compiler analysis" =
   let result = analyze ~source:"let id = (x) -> x\nid(1)\n" in

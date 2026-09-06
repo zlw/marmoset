@@ -5,12 +5,19 @@ open Types
 type variant_def = {
   name : string;
   fields : mono_type list;
+  message : string option;
 }
+
+type enum_kind =
+  | OrdinaryEnum
+  | ErrorEnum
 
 type enum_def = {
   name : string;
+  source_name : string option;
   type_params : string list;
   variants : variant_def list;
+  kind : enum_kind;
 }
 
 (* Global mutable registry *)
@@ -18,6 +25,34 @@ let registry : (string, enum_def) Hashtbl.t = Hashtbl.create 16
 let clear () = Hashtbl.clear registry
 let register (def : enum_def) : unit = Hashtbl.replace registry def.name def
 let lookup (name : string) : enum_def option = Hashtbl.find_opt registry name
+
+let source_name_of_internal_name (name : string) : string =
+  let len = String.length name in
+  let rec find_suffix_start idx =
+    if idx <= 0 then
+      0
+    else if name.[idx - 1] = '_' && name.[idx] = '_' then
+      idx + 1
+    else
+      find_suffix_start (idx - 1)
+  in
+  let suffix_start = find_suffix_start (len - 1) in
+  String.sub name suffix_start (len - suffix_start)
+
+let source_name (def : enum_def) : string =
+  Option.value def.source_name ~default:(source_name_of_internal_name def.name)
+
+let is_error_type_name (name : string) : bool =
+  let has_suffix suffix =
+    let name_len = String.length name and suffix_len = String.length suffix in
+    name_len >= suffix_len && String.sub name (name_len - suffix_len) suffix_len = suffix
+  in
+  String.equal name "Error" || (String.length name > String.length "Error" && has_suffix "Error")
+
+let is_error_enum (name : string) : bool =
+  match lookup name with
+  | Some { kind = ErrorEnum; _ } -> true
+  | _ -> false
 
 let lookup_variant (enum_name : string) (variant_name : string) : variant_def option =
   match lookup enum_name with
@@ -55,16 +90,27 @@ let init_builtins () =
   register
     {
       name = "Option";
+      source_name = Some "Option";
       type_params = [ "a" ];
-      variants = [ { name = "Some"; fields = [ TVar "a" ] }; { name = "None"; fields = [] } ];
+      kind = OrdinaryEnum;
+      variants =
+        [
+          { name = "Some"; fields = [ TVar "a" ]; message = None }; { name = "None"; fields = []; message = None };
+        ];
     };
 
   (* Result[a, e] = Success(a) | Failure(e) *)
   register
     {
       name = "Result";
+      source_name = Some "Result";
       type_params = [ "a"; "e" ];
-      variants = [ { name = "Success"; fields = [ TVar "a" ] }; { name = "Failure"; fields = [ TVar "e" ] } ];
+      kind = OrdinaryEnum;
+      variants =
+        [
+          { name = "Success"; fields = [ TVar "a" ]; message = None };
+          { name = "Failure"; fields = [ TVar "e" ]; message = None };
+        ];
     }
 
 (* Tests *)
@@ -74,8 +120,11 @@ let%test "register and lookup enum" =
   register
     {
       name = "direction";
+      source_name = Some "direction";
       type_params = [];
-      variants = [ { name = "north"; fields = [] }; { name = "south"; fields = [] } ];
+      kind = OrdinaryEnum;
+      variants =
+        [ { name = "north"; fields = []; message = None }; { name = "south"; fields = []; message = None } ];
     };
   match lookup "direction" with
   | None -> false
@@ -86,8 +135,13 @@ let%test "lookup_variant finds variant" =
   register
     {
       name = "Option";
+      source_name = Some "Option";
       type_params = [ "a" ];
-      variants = [ { name = "Some"; fields = [ TVar "a" ] }; { name = "None"; fields = [] } ];
+      kind = OrdinaryEnum;
+      variants =
+        [
+          { name = "Some"; fields = [ TVar "a" ]; message = None }; { name = "None"; fields = []; message = None };
+        ];
     };
   match lookup_variant "Option" "Some" with
   | None -> false
@@ -95,7 +149,14 @@ let%test "lookup_variant finds variant" =
 
 let%test "lookup_variant returns none for unknown" =
   clear ();
-  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "Some"; fields = [ TVar "a" ] } ] };
+  register
+    {
+      name = "Option";
+      source_name = Some "Option";
+      type_params = [ "a" ];
+      kind = OrdinaryEnum;
+      variants = [ { name = "Some"; fields = [ TVar "a" ]; message = None } ];
+    };
   lookup_variant "Option" "None" = None
 
 let%test "lookup_variant does not accept lowercase builtin variant aliases" =
@@ -103,22 +164,42 @@ let%test "lookup_variant does not accept lowercase builtin variant aliases" =
   register
     {
       name = "Ordering";
+      source_name = Some "Ordering";
       type_params = [];
+      kind = OrdinaryEnum;
       variants =
-        [ { name = "Less"; fields = [] }; { name = "Equal"; fields = [] }; { name = "Greater"; fields = [] } ];
+        [
+          { name = "Less"; fields = []; message = None };
+          { name = "Equal"; fields = []; message = None };
+          { name = "Greater"; fields = []; message = None };
+        ];
     };
   lookup_variant "Ordering" "less" = None
 
 let%test "variant_type for nullary constructor" =
   clear ();
-  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "None"; fields = [] } ] };
+  register
+    {
+      name = "Option";
+      source_name = Some "Option";
+      type_params = [ "a" ];
+      kind = OrdinaryEnum;
+      variants = [ { name = "None"; fields = []; message = None } ];
+    };
   match variant_type "Option" "None" [ TInt ] with
   | None -> false
   | Some t -> t = TEnum ("Option", [ TInt ])
 
 let%test "variant_type for unary constructor" =
   clear ();
-  register { name = "Option"; type_params = [ "a" ]; variants = [ { name = "Some"; fields = [ TVar "a" ] } ] };
+  register
+    {
+      name = "Option";
+      source_name = Some "Option";
+      type_params = [ "a" ];
+      kind = OrdinaryEnum;
+      variants = [ { name = "Some"; fields = [ TVar "a" ]; message = None } ];
+    };
   match variant_type "Option" "Some" [ TInt ] with
   | None -> false
   | Some t -> t = tfun TInt (TEnum ("Option", [ TInt ]))

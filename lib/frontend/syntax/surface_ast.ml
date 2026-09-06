@@ -27,8 +27,7 @@ module Surface = struct
     | STApp of name_ref * surface_type_expr list
     | STConstraintShorthand of name_ref list (* Bare trait names in parameter position, e.g. Named & Aged *)
     | STTraitObject of name_ref list (* Dyn[Show] or Dyn[Show & Eq] *)
-    | STArrow of surface_type_expr list * surface_type_expr * bool
-      (* bool = is_effectful; covers both (a) -> b and (a) => b *)
+    | STArrow of surface_type_expr list * surface_type_expr * AST.effect_annotation (* effect = ->, =>, or ~> *)
     | STUnion of surface_type_expr list
     | STIntersection of surface_type_expr list
     | STRecord of surface_record_type_field list * surface_type_expr option
@@ -43,12 +42,13 @@ module Surface = struct
     sv_name : string;
     sv_name_ref : name_ref;
     sv_fields : surface_type_expr list;
+    sv_message : string option;
   }
 
   and surface_type_def_kind =
     | STTransparent of surface_type_expr
     | STNamedProduct of surface_record_type_field list
-    | STNamedWrapper of surface_type_expr
+    | STNamedWrapper of surface_type_expr list
     | STNamedSum of surface_variant_def list
 
   and surface_generic_param = {
@@ -74,6 +74,31 @@ module Surface = struct
     stp_name : string;
     stp_name_ref : name_ref;
     stp_type : surface_type_expr;
+  }
+
+  and surface_extern_block = {
+    seb_shim_id : string;
+    seb_shim_id_ref : name_ref;
+    seb_alias : string option;
+    seb_alias_ref : name_ref option;
+    seb_qualifier : string;
+    seb_fns : surface_extern_fn_sig list;
+  }
+
+  and surface_extern_fn_sig = {
+    sef_name : string;
+    sef_name_ref : name_ref;
+    sef_params : surface_extern_param list;
+    sef_return_type : surface_type_expr;
+    sef_effectful : bool;
+    sef_pos : int;
+    sef_end_pos : int;
+  }
+
+  and surface_extern_param = {
+    sep_name : string;
+    sep_name_ref : name_ref;
+    sep_type : surface_type_expr;
   }
 
   (* ── Surface patterns ── *)
@@ -122,6 +147,15 @@ module Surface = struct
     | SECall of surface_expr * surface_expr list
     | SEEnumConstructor of name_ref * name_ref * surface_expr list
     | SEMatch of surface_expr * surface_match_arm list
+    | SETry of {
+        se_tried : surface_expr;
+        se_wrap : (name_ref * name_ref) option;
+        se_fallback : surface_expr option;
+      }
+    | SEWrap of {
+        se_wrapped : surface_expr;
+        se_wrap : name_ref * name_ref;
+      }
     | SERecordLit of surface_record_field list * surface_expr option
     | SEFieldAccess of surface_expr * name_ref
     | SEMethodCall of {
@@ -134,10 +168,10 @@ module Surface = struct
     (* — vNext surface-only forms — *)
     | SEArrowLambda of {
         se_lambda_params : surface_value_param list;
-        se_lambda_is_effectful : bool;
+        se_lambda_effect : AST.effect_annotation;
         se_lambda_body : surface_expr_or_block;
       }
-      (* (x) -> expr  or  (x, y) => expr *)
+      (* (x) -> expr, (x, y) => expr, or (x) ~> expr *)
     | SEPlaceholder (* _ in expression position; rewritten to SEArrowLambda or rejected in lowering *)
     | SEBlockExpr of surface_block
   (* { let x = 1; x + 2 } in expression position;
@@ -224,6 +258,11 @@ module Surface = struct
         import_alias : string option;
         import_alias_ref : name_ref option;
       }
+    | SExternBlock of surface_extern_block
+    | SExternTypeDef of {
+        extern_type_name : string;
+        extern_type_name_ref : name_ref;
+      }
     | SLet of {
         name : string;
         name_ref : name_ref;
@@ -236,7 +275,7 @@ module Surface = struct
         generics : surface_generic_param list option;
         params : surface_value_param list;
         return_type : surface_type_expr option;
-        is_effectful : bool;
+        effect : AST.effect_annotation;
         body : surface_expr_or_block;
       }
     | STypeDef of {
@@ -259,6 +298,8 @@ module Surface = struct
         name_ref : name_ref;
         type_param : string option;
         type_param_ref : name_ref option;
+        type_params : string list;
+        type_param_refs : name_ref list;
         supertraits : string list;
         supertrait_refs : name_ref list;
         methods : surface_method_sig list;

@@ -1,0 +1,6 @@
+import std.bytes
+
+let payload = bytes.from_str("hi")
+puts(bytes.to_str_lossy(payload))
+puts(bytes.length(payload))
+puts(if (bytes.equal?(payload, bytes.from_str("hi"))) { "equal" } else { "different" })

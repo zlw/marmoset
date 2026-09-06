@@ -1,0 +1,9 @@
+# R005: try requires the tried value to be Result
+type Error = {
+  Missing = "Missing value",
+}
+
+fn bad() -> Result[Str, Error] = {
+  let value = try "value"  # error: tried expression must have type Result
+  Result.Success(value)
+}
