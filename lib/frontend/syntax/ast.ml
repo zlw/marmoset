@@ -530,8 +530,8 @@ module AST = struct
       | Pure -> "->"
       | Effectful -> "=>"
       | EffectPoly -> "~>"
-    and function_to_string (params : (string * type_expr option) list) (effect : effect_annotation) (body : statement) :
-        string =
+    and function_to_string
+        (params : (string * type_expr option) list) (effect : effect_annotation) (body : statement) : string =
       let param_str = List.map (fun (name, _annot) -> name) params |> String.concat ", " in
       Printf.sprintf "(%s) %s %s" param_str (arrow_of_effect effect) (block_to_string body)
     and args_to_string (args : expression list) : string =

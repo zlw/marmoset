@@ -171,7 +171,7 @@ func extern__std_bytes__to_str(input marmoset.Bytes) Result_string_std__bytes__D
 		switch __variant := __value.(type) {
 		case mapi_std_bytes.DecodeErrorInvalidUtf8:
 			_ = __variant
-			return (func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "std.bytes.to_str", int64(237)); return __err })(std__bytes__DecodeError_InvalidUtf8())
+			return (func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "std.bytes.to_str", int64(239)); return __err })(std__bytes__DecodeError_InvalidUtf8())
 		default:
 			panic("std/bytes.to_str: unknown enum variant returned by shim")
 		}
@@ -211,7 +211,7 @@ func std__bytes__Decode_decode_std__bytes__Bytes(input marmoset.Bytes) Result_st
         if true {
             return Result_std__bytes__Bytes_std__bytes__DecodeError_Success(input)
         } else {
-            return Result_std__bytes__Bytes_std__bytes__DecodeError_Failure((func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "Decode.decode", int64(710)); return __err })(std__bytes__DecodeError_InvalidUtf8()))
+            return Result_std__bytes__Bytes_std__bytes__DecodeError_Failure((func(__err std__bytes__DecodeError) std__bytes__DecodeError { __err.Context = marmoset.NewErrorContext("Invalid UTF-8", "std/bytes.mr", "Decode.decode", int64(712)); return __err })(std__bytes__DecodeError_InvalidUtf8()))
         }
 }
 

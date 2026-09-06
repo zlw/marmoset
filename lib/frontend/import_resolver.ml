@@ -875,9 +875,7 @@ let rewrite_program
       | AST.TTraitObject _ -> te
       | AST.TArrow (params, ret, effect) ->
           AST.TArrow
-            ( List.map canonicalize_std_extern_type_expr params,
-              canonicalize_std_extern_type_expr ret,
-              effect )
+            (List.map canonicalize_std_extern_type_expr params, canonicalize_std_extern_type_expr ret, effect)
       | AST.TUnion members -> AST.TUnion (List.map canonicalize_std_extern_type_expr members)
       | AST.TIntersection members -> AST.TIntersection (List.map canonicalize_std_extern_type_expr members)
       | AST.TRecord (fields, row) ->

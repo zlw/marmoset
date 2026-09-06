@@ -653,9 +653,9 @@ and parse_fn_decl_top (p : parser) : (parser * Surface.top_decl, parser) result 
   let* p6, return_type, effect =
     match effect_of_arrow_token p5.peek_token.token_type with
     | Some effect ->
-      let p6 = next_token p5 in
-      let* p7, te = parse_type_expr (next_token p6) in
-      Ok (p7, Some te, effect)
+        let p6 = next_token p5 in
+        let* p7, te = parse_type_expr (next_token p6) in
+        Ok (p7, Some te, effect)
     | None -> Ok (p5, None, AST.Pure)
   in
 
@@ -765,22 +765,22 @@ and parse_type_atom (p : parser) : (parser * Surface.surface_type_expr, parser) 
       let p4 = next_token p3 in
       match effect_of_arrow_token p4.curr_token.token_type with
       | Some effect ->
-        let* p5, return_type = parse_type_expr (next_token p4) in
-        Ok
-          ( p5,
-            with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, effect))) )
+          let* p5, return_type = parse_type_expr (next_token p4) in
+          Ok
+            ( p5,
+              with_surface_type_end p5
+                (Surface.mk_surface_type ~pos (Surface.STArrow (params, return_type, effect))) )
       | None -> Error (peek_error p3 Token.Arrow)
     else if curr_token_is p2 Token.RParen then
       (* Single type in parens: (Int) or (Int | Str) *)
       let p3 = next_token p2 in
       match effect_of_arrow_token p3.curr_token.token_type with
       | Some effect ->
-        let* p5, return_type = parse_type_expr (next_token p3) in
-        Ok
-          ( p5,
-            with_surface_type_end p5
-              (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, effect))) )
+          let* p5, return_type = parse_type_expr (next_token p3) in
+          Ok
+            ( p5,
+              with_surface_type_end p5
+                (Surface.mk_surface_type ~pos (Surface.STArrow ([ first ], return_type, effect))) )
       | None ->
           (* Just grouping: (Int) or (Int | Str) *)
           Ok (p3, first)
@@ -1676,8 +1676,8 @@ and parse_method_impl (p : parser) : (parser * Surface.surface_method_impl, pars
   let* p6, smi_return_type, smi_effect =
     match effect_of_arrow_token p5.peek_token.token_type with
     | Some effect ->
-      let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
-      Ok (p6, Some ret_type, Some effect)
+        let* p6, ret_type = parse_type_expr (next_token (next_token p5)) in
+        Ok (p6, Some ret_type, Some effect)
     | None -> Ok (next_token p5, None, None)
   in
 
@@ -1981,9 +1981,7 @@ and parse_wrap_target (p_wrap : parser) : (parser * (Surface.name_ref * Surface.
   | variant_ref :: rev_type_refs when rev_type_refs <> [] ->
       let type_ref = combine_name_refs (List.rev rev_type_refs) in
       Ok (p_last, (type_ref, variant_ref))
-  | _ ->
-      Error
-        (add_error ~code:"parse-invalid-wrap" p_first "expected wrap target in the form ErrorType.Variant")
+  | _ -> Error (add_error ~code:"parse-invalid-wrap" p_first "expected wrap target in the form ErrorType.Variant")
 
 and parse_wrap_expression (p : parser) (left : Surface.surface_expr) :
     (parser * Surface.surface_expr, parser) result =
@@ -2011,9 +2009,7 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
   (* Use Lexer.next_token to peek at the token after p.peek_token without advancing *)
   let _, peek2_tok = Lexer.next_token p.lexer in
   (* Check for empty lambda: () -> expr, () => expr, or () ~> expr *)
-  let is_empty_lambda =
-    peek_token_is p Token.RParen && token_is_effect_arrow peek2_tok.token_type
-  in
+  let is_empty_lambda = peek_token_is p Token.RParen && token_is_effect_arrow peek2_tok.token_type in
   (* Check for multi-param or typed-param lambda: (a, b) -> or (a: T) -> *)
   let is_multi_or_typed =
     peek_token_is p Token.Ident && (peek2_tok.token_type = Token.Comma || peek2_tok.token_type = Token.Colon)
@@ -2032,11 +2028,8 @@ and parse_lambda_or_grouped (p : parser) : (parser * Surface.surface_expr, parse
         with_surface_expr_end p4
           (mk_surface_expr id pos
              (Surface.SEArrowLambda
-                {
-                  se_lambda_params = [];
-                  se_lambda_effect = effect;
-                  se_lambda_body = Surface.SEOBExpr body_expr;
-                })) )
+                { se_lambda_params = []; se_lambda_effect = effect; se_lambda_body = Surface.SEOBExpr body_expr }))
+      )
   else if is_multi_or_typed then
     (* Parse as explicit lambda params *)
     let* p2, lparams = parse_lambda_param_list (next_token p) in
@@ -4317,10 +4310,7 @@ module Test = struct
                         {
                           Surface.se_expr =
                             Surface.SEWrap
-                              {
-                                se_wrap = ({ Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ });
-                                _;
-                              };
+                              { se_wrap = { Surface.text = "ConfigError"; _ }, { Surface.text = "File"; _ }; _ };
                           _;
                         };
                       _;
@@ -4348,8 +4338,7 @@ module Test = struct
                           Surface.se_expr =
                             Surface.SEWrap
                               {
-                                se_wrap =
-                                  ({ Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ });
+                                se_wrap = { Surface.text = "file.Error"; _ }, { Surface.text = "InvalidData"; _ };
                                 _;
                               };
                           _;
@@ -5294,7 +5283,8 @@ let%test "parse type intersection parenthesizes function members" =
           match stmt.stmt with
           | AST.TypeAlias alias_def -> (
               match alias_def.alias_body with
-              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", AST.Pure); AST.TCon "Bool" ] ->
+              | AST.TIntersection [ AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Str", AST.Pure); AST.TCon "Bool" ]
+                ->
                   true
               | _ -> false)
           | _ -> false)
@@ -5312,7 +5302,8 @@ let%test "parse function parameter annotation with function type" =
           | AST.Let { value = { expr = AST.Function fn; _ }; _ } -> (
               match fn.params with
               | [
-               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure))); ("x", Some (AST.TCon "Int"));
+               ("f", Some (AST.TArrow ([ AST.TCon "Int" ], AST.TCon "Int", AST.Pure)));
+               ("x", Some (AST.TCon "Int"));
               ] ->
                   true
               | _ -> false)

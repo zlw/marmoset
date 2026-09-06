@@ -31,7 +31,10 @@ reject_snippet() {
 
 require_snippet std/file.mr "bytes.Decode.decode(payload) wrap Error.InvalidData"
 require_snippet std/file.mr "let file = try file_shim.open_handle(path, mode) wrap UseError.Open"
-require_snippet std/io.mr "Result.bind((_) => Write.flush(writer))"
+# Output helpers return the write result directly; flushing is explicit.
+require_snippet std/io.mr 'Write.write(writer, "#{value}")'
+require_snippet std/io.mr 'Write.write(writer, "#{value}\n")'
+reject_snippet std/io.mr "Result.bind((_) => Write.flush(writer))"
 
 reject_snippet std/file.mr "let value = try bytes.Decode.decode(payload) wrap Error.InvalidData"
 reject_snippet std/file.mr "Result.wrap((err: DecodeError) -> Error.InvalidData(err))"

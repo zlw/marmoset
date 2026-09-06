@@ -77,7 +77,6 @@ let effect_of_bool is_effectful =
 
 let effect_to_bool = effect_is_effectful
 
-
 (* Canonicalize record fields by name. If duplicates exist, last write wins. *)
 let normalize_record_fields (fields : record_field_type list) : record_field_type list =
   let tbl : (string, mono_type) Hashtbl.t = Hashtbl.create (max 16 (List.length fields)) in

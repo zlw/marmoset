@@ -1239,8 +1239,7 @@ let%test "lower SEArrowLambda to canonical Function" =
          })
   in
   match (lower_expr id_supply lambda).expr with
-  | AST.Function { params = [ ("x", None) ]; effect = AST.Pure; body = { stmt = AST.Block [ _ ]; _ }; _ } ->
-      true
+  | AST.Function { params = [ ("x", None) ]; effect = AST.Pure; body = { stmt = AST.Block [ _ ]; _ }; _ } -> true
   | _ -> false
 
 let%test "arrow lambda shorthand param lowers with program trait context" =
@@ -1303,13 +1302,10 @@ let%test "lower SEWrap to AST.Wrap" =
   let se =
     Surface.mk_surface_expr ~id:2 ~pos:0
       (Surface.SEWrap
-         {
-           se_wrapped = wrapped;
-           se_wrap = (Surface.mk_name_ref "ConfigError", Surface.mk_name_ref "File");
-         })
+         { se_wrapped = wrapped; se_wrap = (Surface.mk_name_ref "ConfigError", Surface.mk_name_ref "File") })
   in
   match (lower_expr id_supply se).expr with
-  | AST.Wrap { target = ("ConfigError", "File"); _ } -> true
+  | AST.Wrap { target = "ConfigError", "File"; _ } -> true
   | _ -> false
 
 let%test "lower pipe desugars rhs callable into Call" =

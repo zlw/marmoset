@@ -2175,16 +2175,14 @@ let with_temp_error_stdlib main_source f =
           f ~stdlib_root ~entry_file:(Filename.concat root "main.mr")))
 
 let%test "imported std.file.Error can be aliased only under an error name" =
-  with_temp_error_stdlib
-    "import std.file.Error\ntype FileError = Error\nlet value = 1\nvalue\n"
+  with_temp_error_stdlib "import std.file.Error\ntype FileError = Error\nlet value = 1\nvalue\n"
     (fun ~stdlib_root ~entry_file ->
       match check_entry ~stdlib_root ~entry_file () with
       | Ok diagnostics -> diagnostics = []
       | Error _ -> false)
 
 let%test "imported std.file.Error rejects non-error alias name" =
-  with_temp_error_stdlib
-    "import std.file.Error\ntype Problem = Error\nlet value = 1\nvalue\n"
+  with_temp_error_stdlib "import std.file.Error\ntype Problem = Error\nlet value = 1\nvalue\n"
     (fun ~stdlib_root ~entry_file ->
       match check_entry ~stdlib_root ~entry_file () with
       | Error ({ Diagnostic.code = "error-alias-name"; _ } :: _) -> true

@@ -370,9 +370,8 @@ let signature_help
                                 let param_types = List.map snd method_sig.method_params in
                                 let param_names = List.map fst method_sig.method_params in
                                 let effect = Infer.effect_of_trait_effect method_sig.method_effect in
-                                Some
-                                  (`Method (param_types, method_sig.method_return_type, param_names, effect))
-                            )))
+                                Some (`Method (param_types, method_sig.method_return_type, param_names, effect))))
+                    )
                 | Some recv_id, Some Resolution_artifacts.InherentMethod
                 | Some recv_id, Some Resolution_artifacts.QualifiedInherentMethod -> (
                     match Hashtbl.find_opt type_map recv_id with
@@ -396,8 +395,7 @@ let signature_help
                             let param_types = List.map snd method_sig.method_params in
                             let param_names = List.map fst method_sig.method_params in
                             let effect = Infer.effect_of_trait_effect method_sig.method_effect in
-                            Some (`Method (param_types, method_sig.method_return_type, param_names, effect))
-                        ))
+                            Some (`Method (param_types, method_sig.method_return_type, param_names, effect))))
                 | None, _ -> None))
         | None -> (
             match Hashtbl.find_opt type_map call.fn_id with
@@ -419,8 +417,7 @@ let signature_help
                 let norm = Types.normalize fn_type in
                 let params, ret, eff = collect_params Types.Pure norm in
                 (params, ret, eff, None)
-            | `Method (ptypes, ret, pnames, effect) ->
-                (ptypes, Types.normalize ret, effect, Some pnames)
+            | `Method (ptypes, ret, pnames, effect) -> (ptypes, Types.normalize ret, effect, Some pnames)
           in
           match param_types with
           | [] -> None
@@ -441,9 +438,7 @@ let signature_help
                         | None -> [])
                     | None -> [])
               in
-              let label, offsets =
-                build_label ~param_names ~param_types ~ret_type ~effect ~fn_display_name
-              in
+              let label, offsets = build_label ~param_names ~param_types ~ret_type ~effect ~fn_display_name in
               let parameters =
                 List.map
                   (fun (start, stop) -> Lsp_t.ParameterInformation.create ~label:(`Offset (start, stop)) ())

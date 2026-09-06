@@ -39,15 +39,15 @@ let source_name_of_internal_name (name : string) : string =
   let suffix_start = find_suffix_start (len - 1) in
   String.sub name suffix_start (len - suffix_start)
 
-let source_name (def : enum_def) : string = Option.value def.source_name ~default:(source_name_of_internal_name def.name)
+let source_name (def : enum_def) : string =
+  Option.value def.source_name ~default:(source_name_of_internal_name def.name)
 
 let is_error_type_name (name : string) : bool =
   let has_suffix suffix =
     let name_len = String.length name and suffix_len = String.length suffix in
     name_len >= suffix_len && String.sub name (name_len - suffix_len) suffix_len = suffix
   in
-  String.equal name "Error"
-  || (String.length name > String.length "Error" && has_suffix "Error")
+  String.equal name "Error" || (String.length name > String.length "Error" && has_suffix "Error")
 
 let is_error_enum (name : string) : bool =
   match lookup name with
@@ -95,8 +95,7 @@ let init_builtins () =
       kind = OrdinaryEnum;
       variants =
         [
-          { name = "Some"; fields = [ TVar "a" ]; message = None };
-          { name = "None"; fields = []; message = None };
+          { name = "Some"; fields = [ TVar "a" ]; message = None }; { name = "None"; fields = []; message = None };
         ];
     };
 
@@ -124,7 +123,8 @@ let%test "register and lookup enum" =
       source_name = Some "direction";
       type_params = [];
       kind = OrdinaryEnum;
-      variants = [ { name = "north"; fields = []; message = None }; { name = "south"; fields = []; message = None } ];
+      variants =
+        [ { name = "north"; fields = []; message = None }; { name = "south"; fields = []; message = None } ];
     };
   match lookup "direction" with
   | None -> false
@@ -140,8 +140,7 @@ let%test "lookup_variant finds variant" =
       kind = OrdinaryEnum;
       variants =
         [
-          { name = "Some"; fields = [ TVar "a" ]; message = None };
-          { name = "None"; fields = []; message = None };
+          { name = "Some"; fields = [ TVar "a" ]; message = None }; { name = "None"; fields = []; message = None };
         ];
     };
   match lookup_variant "Option" "Some" with

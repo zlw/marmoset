@@ -906,8 +906,8 @@ let%test "error enum constructor member resolves to the messaged variant declara
       in
       expect_target ~label:"error enum constructor member"
         ~actual:
-          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.NotFound"
-             ~offset_in_needle:10 ())
+          (definition_at ~file_id:main_path ~source:main_source ~needle:"FileError.NotFound" ~offset_in_needle:10
+             ())
         ~expected:(target_span_of_substring ~file_path:main_path ~source:main_source ~needle:"NotFound" ()))
 
 let%test "bare wrap target resolves to the messaged variant declaration head" =

@@ -89,8 +89,7 @@ let%test "display_type_name preserves module path and unmangles components" =
   && display_type_name "my_u002dmodule__Result_u0021" = "my-module.Result!"
 
 let%test "display_type_name keeps implicit std core types unqualified" =
-  display_type_name "std__result__Result" = "Result"
-  && display_type_name "std__prelude__Show" = "Show"
+  display_type_name "std__result__Result" = "Result" && display_type_name "std__prelude__Show" = "Show"
 
 let%test "display_trait_name restores builtin source-facing names" =
   display_trait_name

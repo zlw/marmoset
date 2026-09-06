@@ -51,7 +51,6 @@ let push_hover_item (items : declaration_hover_item list ref) ~start_pos ~end_po
     items := { start_pos; end_pos; text } :: !items
 
 let token_end_pos (tok : Token.token) : int = max tok.pos (tok.pos + String.length tok.literal - 1)
-
 let string_token_end_pos (tok : Token.token) : int = tok.pos + String.length tok.literal + 1
 
 let source_between_tokens ~(source : string) (start_tok : Token.token) (end_tok : Token.token) : string =
@@ -187,7 +186,7 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
   let idx = ref (kw_idx + 1) in
   if !idx >= len || tokens.(!idx).token_type <> Token.Ident then
     []
-  else (
+  else
     let type_name = tokens.(!idx).literal in
     incr idx;
     if !idx < len && tokens.(!idx).token_type = Token.LBracket then
@@ -222,7 +221,9 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
             let after_payload, payload_text =
               if !idx + 1 < len && tokens.(!idx + 1).token_type = Token.LParen then
                 let payload_start = !idx + 2 in
-                let payload_stop = skip_balanced_group tokens (!idx + 1) ~open_:Token.LParen ~close_:Token.RParen in
+                let payload_stop =
+                  skip_balanced_group tokens (!idx + 1) ~open_:Token.LParen ~close_:Token.RParen
+                in
                 let payload_text =
                   if payload_start <= payload_stop - 2 then
                     source_between_tokens ~source tokens.(payload_start) tokens.(payload_stop - 2)
@@ -249,7 +250,9 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
               else
                 "(" ^ payload_text ^ ")"
             in
-            let variant_label = Printf.sprintf "%s.%s%s: %s" type_name variant_tok.literal payload_suffix type_name in
+            let variant_label =
+              Printf.sprintf "%s.%s%s: %s" type_name variant_tok.literal payload_suffix type_name
+            in
             let variant_text =
               match message_tok with
               | None -> variant_label
@@ -261,12 +264,13 @@ let parse_record_field_hover_items ~(source : string) (tokens : Token.token arra
             | None -> ()
             | Some tok ->
                 push_hover_item items ~start_pos:tok.pos ~end_pos:(string_token_end_pos tok)
-                  ~text:(Printf.sprintf "%S: canonical message for %s.%s" tok.literal type_name variant_tok.literal));
+                  ~text:
+                    (Printf.sprintf "%S: canonical message for %s.%s" tok.literal type_name variant_tok.literal));
             idx := after_message
         | Token.Comma -> incr idx
         | _ -> incr idx
       done;
-      List.rev !items))
+      List.rev !items)
 
 let find_declaration_header_hover ~(source : string) ~(offset : int) : declaration_hover_item option =
   let tokens = Array.of_list (Lexer.lex source) in
@@ -900,7 +904,8 @@ let%test "hover on top-level fn declaration name shows named function type and h
 
 let%test "hover on effect-polymorphic fn declaration name shows tilde arrow" =
   match hover_marked "fn |apply(f: (Int) ~> Int, x: Int) ~> Int = f(x)" with
-  | _, Some h -> string_contains h.type_text "apply:" && string_contains h.type_text "~> Int" && h.highlighted = "apply"
+  | _, Some h ->
+      string_contains h.type_text "apply:" && string_contains h.type_text "~> Int" && h.highlighted = "apply"
   | _, None -> false
 
 let%test "hover on top-level fn param highlights only the param name" =

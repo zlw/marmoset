@@ -405,7 +405,8 @@ let resolve_synthetic_error_impl (trait_name : string) (for_type : mono_type) : 
                   {
                     m with
                     method_params =
-                      List.map (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty)))
+                      List.map
+                        (fun (name, ty) -> (name, canonical_type (apply_substitution subst ty)))
                         m.method_params;
                     method_return_type = canonical_type (apply_substitution subst m.method_return_type);
                   })

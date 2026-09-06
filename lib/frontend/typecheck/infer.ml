@@ -3401,8 +3401,8 @@ and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
       | None ->
           if Option.is_none (error_enum_name inner_error') || Option.is_none (error_enum_name outer_error') then
             Error
-              (error_at ~code:"type-try"
-                 ~message:"try requires Result error types to be Error or *Error enums" expr)
+              (error_at ~code:"type-try" ~message:"try requires Result error types to be Error or *Error enums"
+                 expr)
           else if mono_types_unify inner_error' outer_error' then
             Ok (subst, success_type)
           else
@@ -3435,15 +3435,14 @@ and infer_result_try _type_map expr _tried subst success_type inner_error wrap :
               Error (error_at ~code:"type-try" ~message:"wrap target must match enclosing Result error type" expr)
           | _ -> Error (error_at ~code:"type-try" ~message:"enclosing function must return Result" expr)))
 
-and infer_top_level_result_try expr subst success_type inner_error wrap :
-    (substitution * mono_type) infer_result =
+and infer_top_level_result_try expr subst success_type inner_error wrap : (substitution * mono_type) infer_result
+    =
   let inner_error' = apply_substitution subst inner_error in
   match wrap with
   | None ->
       if Option.is_none (error_enum_name inner_error') then
         Error
-          (error_at ~code:"type-try" ~message:"try requires Result error type to be an Error or *Error enum"
-             expr)
+          (error_at ~code:"type-try" ~message:"try requires Result error type to be an Error or *Error enum" expr)
       else
         Ok (subst, success_type)
   | Some (target_type, target_variant) -> (

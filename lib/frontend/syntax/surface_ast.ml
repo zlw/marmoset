@@ -27,8 +27,7 @@ module Surface = struct
     | STApp of name_ref * surface_type_expr list
     | STConstraintShorthand of name_ref list (* Bare trait names in parameter position, e.g. Named & Aged *)
     | STTraitObject of name_ref list (* Dyn[Show] or Dyn[Show & Eq] *)
-    | STArrow of surface_type_expr list * surface_type_expr * AST.effect_annotation
-      (* effect = ->, =>, or ~> *)
+    | STArrow of surface_type_expr list * surface_type_expr * AST.effect_annotation (* effect = ->, =>, or ~> *)
     | STUnion of surface_type_expr list
     | STIntersection of surface_type_expr list
     | STRecord of surface_record_type_field list * surface_type_expr option

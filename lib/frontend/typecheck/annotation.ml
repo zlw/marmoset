@@ -628,7 +628,8 @@ let rec is_subtype_of (actual : Types.mono_type) (expected : Types.mono_type) : 
   (* Functions: contravariant in params, covariant in return *)
   | Types.TFun (p1, r1, actual_effect), Types.TFun (p2, r2, expected_effect) ->
       Types.effect_allows_actual ~actual:actual_effect ~expected:expected_effect
-      && is_subtype_of p2 p1 && is_subtype_of r1 r2
+      && is_subtype_of p2 p1
+      && is_subtype_of r1 r2
   (* Enums: same name, subtypes for all args *)
   | Types.TEnum (name1, args1), Types.TEnum (name2, args2) ->
       name1 = name2 && List.length args1 = List.length args2 && List.for_all2 is_subtype_of args1 args2
@@ -691,11 +692,13 @@ let rec format_mono_type (t : Types.mono_type) : string =
   | Types.TIntersection types -> String.concat " & " (List.map format_mono_type types)
   | Types.TEnum (name, []) -> Display_names.display_type_name name
   | Types.TEnum (name, args) ->
-      Printf.sprintf "%s[%s]" (Display_names.display_type_name name)
+      Printf.sprintf "%s[%s]"
+        (Display_names.display_type_name name)
         (String.concat ", " (List.map format_mono_type args))
   | Types.TNamed (name, []) -> Display_names.display_type_name name
   | Types.TNamed (name, args) ->
-      Printf.sprintf "%s[%s]" (Display_names.display_type_name name)
+      Printf.sprintf "%s[%s]"
+        (Display_names.display_type_name name)
         (String.concat ", " (List.map format_mono_type args))
 
 (* ============================================================
@@ -895,8 +898,7 @@ let%test "intersection annotation rejects general callable intersections" =
     type_expr_to_mono_type
       (Syntax.Ast.AST.TIntersection
          [
-           Syntax.Ast.AST.TArrow
-             ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Pure);
+           Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Pure);
            Syntax.Ast.AST.TCon "Bool";
          ])
   with
@@ -983,8 +985,7 @@ let%test "Phase3: TArrow pure converts to TFun false" =
 let%test "Phase3: TArrow effectful converts to TFun true" =
   match
     type_expr_to_mono_type
-      (Syntax.Ast.AST.TArrow
-         ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Effectful))
+      (Syntax.Ast.AST.TArrow ([ Syntax.Ast.AST.TCon "Int" ], Syntax.Ast.AST.TCon "Int", Syntax.Ast.AST.Effectful))
   with
   | Ok (Types.TFun (Types.TInt, Types.TInt, Types.Effectful)) -> true
   | _ -> false
